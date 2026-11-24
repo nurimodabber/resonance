@@ -1,4 +1,4 @@
-import { jsonResponse, requireAdmin } from '../_lib/auth';
+import { jsonResponse, requireAdmin } from '../_lib/auth.js';
 import {
   CARDS_PATH,
   getCardsOrSeed,
@@ -6,7 +6,7 @@ import {
   STACKS_PATH,
   validateStackInput,
   writeJsonBlob,
-} from '../_lib/store';
+} from '../_lib/store.js';
 import type { StackMeta } from '../../src/types/deck';
 
 function normalizeRings(stacks: StackMeta[]): StackMeta[] {

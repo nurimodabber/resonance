@@ -1,5 +1,5 @@
-import { jsonResponse, verifySessionFromRequest } from './_lib/auth';
-import { getCardsOrSeed, getStacksOrSeed, isBlobConfigured } from './_lib/store';
+import { jsonResponse, verifySessionFromRequest } from './_lib/auth.js';
+import { getCardsOrSeed, getStacksOrSeed, isBlobConfigured } from './_lib/store.js';
 
 export async function GET(request: Request): Promise<Response> {
   if (!isBlobConfigured()) {

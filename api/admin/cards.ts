@@ -1,4 +1,4 @@
-import { jsonResponse, requireAdmin } from '../_lib/auth';
+import { jsonResponse, requireAdmin } from '../_lib/auth.js';
 import {
   CARDS_PATH,
   getCardsOrSeed,
@@ -6,7 +6,7 @@ import {
   SEED_CARDS,
   validateCardInput,
   writeJsonBlob,
-} from '../_lib/store';
+} from '../_lib/store.js';
 import type { CardItem } from '../../src/types/deck';
 
 export async function POST(request: Request): Promise<Response> {

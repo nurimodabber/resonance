@@ -10,14 +10,14 @@ import {
   verifyPassword,
   verifySameOrigin,
   verifySessionFromRequest,
-} from '../_lib/auth';
+} from '../_lib/auth.js';
 import {
   ADMIN_AUTH_PATH,
   type AdminAuthRecord,
   isBlobConfigured,
   readJsonBlob,
   writeJsonBlob,
-} from '../_lib/store';
+} from '../_lib/store.js';
 
 export async function GET(request: Request): Promise<Response> {
   const configured = isBlobConfigured() && Boolean(getSessionSecret());

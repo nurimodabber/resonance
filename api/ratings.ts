@@ -1,5 +1,5 @@
-import { jsonResponse } from './_lib/auth';
-import { getRatings, isBlobConfigured, RATINGS_PATH, writeJsonBlob } from './_lib/store';
+import { jsonResponse } from './_lib/auth.js';
+import { getRatings, isBlobConfigured, RATINGS_PATH, writeJsonBlob } from './_lib/store.js';
 import type { CardRating } from '../src/types/deck';
 
 export async function POST(request: Request): Promise<Response> {

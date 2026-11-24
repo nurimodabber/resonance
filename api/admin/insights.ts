@@ -1,4 +1,4 @@
-import { jsonResponse, requireAdmin } from '../_lib/auth';
+import { jsonResponse, requireAdmin } from '../_lib/auth.js';
 import {
   CARDS_PATH,
   getCardsOrSeed,
@@ -11,7 +11,7 @@ import {
   type RoomRecord,
   validateCardInput,
   writeJsonBlob,
-} from '../_lib/store';
+} from '../_lib/store.js';
 
 export async function GET(request: Request): Promise<Response> {
   const auth = requireAdmin(request);

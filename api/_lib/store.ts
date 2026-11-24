@@ -1,7 +1,7 @@
 import { BlobNotFoundError, get, put } from '@vercel/blob';
-import { CURATED_QUESTIONS } from '../../src/data/questions';
-import { CURATED_QUOTES } from '../../src/data/quotes';
-import { STACKS, STACK_ICON_IDS } from '../../src/data/stacks';
+import { CURATED_QUESTIONS } from '../../src/data/questions.js';
+import { CURATED_QUOTES } from '../../src/data/quotes.js';
+import { STACKS, STACK_ICON_IDS } from '../../src/data/stacks.js';
 import type {
   CardItem,
   CardKind,

@@ -1,4 +1,4 @@
-import { jsonResponse } from './_lib/auth';
+import { jsonResponse } from './_lib/auth.js';
 import {
   getInboxSubmissions,
   INBOX_PATH,
@@ -7,7 +7,7 @@ import {
   roomBlobPath,
   type RoomRecord,
   writeJsonBlob,
-} from './_lib/store';
+} from './_lib/store.js';
 import type { GroupRoom, GroupSubmission, Language, StackId } from '../src/types/deck';
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
