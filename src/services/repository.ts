@@ -1,6 +1,6 @@
-import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
 import { CURATED_QUESTIONS } from '../data/questions';
 import { CURATED_QUOTES } from '../data/quotes';
+import { buildStackMap, STACKS } from '../data/stacks';
 import type {
   CardItem,
   CardRating,
@@ -9,27 +9,45 @@ import type {
   GroupSubmission,
   Language,
   StackId,
+  StackMeta,
 } from '../types/deck';
 
+export const SEED_STACKS: StackMeta[] = STACKS;
 export const SEED_CARDS: CardItem[] = [...CURATED_QUESTIONS, ...CURATED_QUOTES];
 
+export type BackendMode = 'vercel' | 'local';
+
+export interface AdminAuthStatus {
+  mode: BackendMode;
+  configured: boolean;
+  hasAdmin: boolean;
+  authenticated: boolean;
+  email: string | null;
+}
+
+export interface AdminInsightsData {
+  stacks: StackMeta[];
+  cards: CardItem[];
+  ratings: CardRating[];
+  submissions: GroupSubmission[];
+}
+
+const LS_STACKS = 'resonance.localStacks.v1';
 const LS_CARDS = 'resonance.localCards.v1';
+const LS_DELETED_CARDS = 'resonance.localDeletedCards.v1';
 const LS_RATINGS = 'resonance.localRatings.v1';
 const LS_ROOMS = 'resonance.localRooms.v1';
 const LS_SUBMISSIONS = 'resonance.localSubmissions.v1';
 const LS_SESSION_ID = 'resonance.sessionId.v1';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-
-export const isSupabaseConfigured = Boolean(SUPABASE_URL?.trim() && SUPABASE_KEY?.trim());
-
-const supabase: SupabaseClient | null = isSupabaseConfigured
-  ? createClient(SUPABASE_URL!.trim(), SUPABASE_KEY!.trim())
-  : null;
+let detectedBackend: BackendMode | null = null;
 
 const syncChannel =
   typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('resonance-sync') : null;
+
+export function getBackendMode(): BackendMode {
+  return detectedBackend ?? 'local';
+}
 
 export function getSessionId(): string {
   if (typeof window === 'undefined') return 'ssr-session';
@@ -58,99 +76,191 @@ function lsWrite<T>(key: string, value: T): void {
   }
 }
 
-// ---------- Mapping helpers between TypeScript CardItem and Postgres snake_case ----------
-interface CardRow {
-  id: string;
-  stack_id: StackId;
-  kind: 'question' | 'wildcard' | 'quote';
-  de: string;
-  en: string;
-  dig_deeper_de?: string | null;
-  dig_deeper_en?: string | null;
-  quote_subdeck?: 'general' | 'ruhi' | null;
-  ruhi_chapter?: 1 | 2 | 3 | null;
-  author?: string | null;
-  source_label_de?: string | null;
-  source_label_en?: string | null;
-  source_url_de?: string | null;
-  source_url_en?: string | null;
-  prompt_de?: string | null;
-  prompt_en?: string | null;
-  archived: boolean;
-  is_custom: boolean;
-  contributed_by?: string | null;
-  created_at?: string;
-}
-
-function rowToCard(row: CardRow): CardItem {
-  return {
-    id: row.id,
-    stackId: row.stack_id,
-    kind: row.kind,
-    de: row.de,
-    en: row.en,
-    digDeeperDe: row.dig_deeper_de ?? undefined,
-    digDeeperEn: row.dig_deeper_en ?? undefined,
-    quoteSubdeck: row.quote_subdeck ?? undefined,
-    ruhiChapter: row.ruhi_chapter ?? undefined,
-    author: row.author ?? undefined,
-    sourceLabelDe: row.source_label_de ?? undefined,
-    sourceLabelEn: row.source_label_en ?? undefined,
-    sourceUrlDe: row.source_url_de ?? undefined,
-    sourceUrlEn: row.source_url_en ?? undefined,
-    promptDe: row.prompt_de ?? undefined,
-    promptEn: row.prompt_en ?? undefined,
-    archived: row.archived,
-    isCustom: row.is_custom,
-    contributedBy: row.contributed_by ?? undefined,
-    createdAt: row.created_at,
-  };
-}
-
-function cardToRow(card: CardItem): CardRow {
-  return {
-    id: card.id,
-    stack_id: card.stackId,
-    kind: card.kind,
-    de: card.de,
-    en: card.en,
-    dig_deeper_de: card.digDeeperDe ?? null,
-    dig_deeper_en: card.digDeeperEn ?? null,
-    quote_subdeck: card.quoteSubdeck ?? null,
-    ruhi_chapter: card.ruhiChapter ?? null,
-    author: card.author ?? null,
-    source_label_de: card.sourceLabelDe ?? null,
-    source_label_en: card.sourceLabelEn ?? null,
-    source_url_de: card.sourceUrlDe ?? null,
-    source_url_en: card.sourceUrlEn ?? null,
-    prompt_de: card.promptDe ?? null,
-    prompt_en: card.promptEn ?? null,
-    archived: Boolean(card.archived),
-    is_custom: Boolean(card.isCustom),
-    contributed_by: card.contributedBy ?? null,
-  };
-}
-
-// ---------- Repository API ----------
-
-export async function fetchAllCards(): Promise<CardItem[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('cards')
-      .select('*')
-      .order('created_at', { ascending: true });
-    if (!error && data && data.length > 0) {
-      return (data as CardRow[]).map(rowToCard);
+async function apiJson<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<{ ok: true; data: T } | { ok: false; status: number; error: string }> {
+  try {
+    const res = await fetch(path, {
+      ...init,
+      credentials: 'include',
+      headers: {
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(init?.headers || {}),
+      },
+    });
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      return { ok: false, status: res.status, error: `Unexpected response (${res.status})` };
     }
-    return SEED_CARDS;
+    const payload = (await res.json()) as T & { error?: string };
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: payload?.error || `Request failed (${res.status})`,
+      };
+    }
+    return { ok: true, data: payload };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : 'Network error',
+    };
+  }
+}
+
+async function ensureBackendProbed(): Promise<BackendMode> {
+  if (detectedBackend) return detectedBackend;
+  const res = await apiJson<{ mode?: string }>('/api/catalog');
+  if (res.ok && res.data.mode === 'vercel') {
+    detectedBackend = 'vercel';
+  } else {
+    detectedBackend = 'local';
+  }
+  return detectedBackend;
+}
+
+// ---------- Local storage fallbacks ----------
+
+function readLocalStacks(includeArchived = false): StackMeta[] {
+  const stored = lsRead<StackMeta[] | null>(LS_STACKS, null);
+  const list = Array.isArray(stored) && stored.length > 0 ? stored : SEED_STACKS;
+  const sorted = list.slice().sort((a, b) => a.ring - b.ring);
+  return includeArchived ? sorted : sorted.filter((s) => !s.archived);
+}
+
+function writeLocalStacks(stacks: StackMeta[]): StackMeta[] {
+  const normalized = stacks
+    .slice()
+    .map((s, idx) => ({ ...s, ring: idx + 1 }));
+  lsWrite(LS_STACKS, normalized);
+  syncChannel?.postMessage({ type: 'cards-updated' });
+  return normalized;
+}
+
+function readLocalCards(includeArchived = false): CardItem[] {
+  const overrides = lsRead<Record<string, CardItem>>(LS_CARDS, {});
+  const deletedIds = new Set(lsRead<string[]>(LS_DELETED_CARDS, []));
+  const mergedSeed = SEED_CARDS.filter((c) => !deletedIds.has(c.id)).map((c) =>
+    overrides[c.id] ? { ...c, ...overrides[c.id] } : c,
+  );
+  const seedIds = new Set(SEED_CARDS.map((c) => c.id));
+  const customOnly = Object.values(overrides).filter(
+    (c) => !seedIds.has(c.id) && !deletedIds.has(c.id),
+  );
+  const all = [...customOnly, ...mergedSeed];
+  return includeArchived ? all : all.filter((c) => !c.archived);
+}
+
+// ---------- Public Catalog ----------
+
+export async function fetchCatalog(includeArchived = false): Promise<{
+  mode: BackendMode;
+  stacks: StackMeta[];
+  cards: CardItem[];
+}> {
+  const query = includeArchived ? '/api/catalog?includeArchived=1' : '/api/catalog';
+  const res = await apiJson<{ mode?: string; stacks?: StackMeta[]; cards?: CardItem[] }>(query);
+  if (res.ok && res.data.mode === 'vercel' && Array.isArray(res.data.stacks) && Array.isArray(res.data.cards)) {
+    detectedBackend = 'vercel';
+    return {
+      mode: 'vercel',
+      stacks: res.data.stacks,
+      cards: res.data.cards,
+    };
   }
 
-  const overrides = lsRead<Record<string, CardItem>>(LS_CARDS, {});
-  const merged = SEED_CARDS.map((c) => (overrides[c.id] ? { ...c, ...overrides[c.id] } : c));
-  const seedIds = new Set(SEED_CARDS.map((c) => c.id));
-  const customOnly = Object.values(overrides).filter((c) => !seedIds.has(c.id));
-  return [...merged, ...customOnly];
+  if (!res.ok && (res.status === 404 || res.status === 0)) {
+    detectedBackend = 'local';
+  }
+  return {
+    mode: getBackendMode(),
+    stacks: readLocalStacks(includeArchived),
+    cards: readLocalCards(includeArchived),
+  };
 }
+
+export async function fetchAllCards(includeArchived = false): Promise<CardItem[]> {
+  const catalog = await fetchCatalog(includeArchived);
+  return catalog.cards;
+}
+
+export async function fetchAllStacks(includeArchived = false): Promise<StackMeta[]> {
+  const catalog = await fetchCatalog(includeArchived);
+  return catalog.stacks;
+}
+
+// ---------- Admin Authentication ----------
+
+export async function fetchAdminAuthStatus(): Promise<AdminAuthStatus> {
+  const res = await apiJson<{
+    configured: boolean;
+    hasAdmin: boolean;
+    authenticated: boolean;
+    email: string | null;
+  }>('/api/admin/auth');
+
+  if (res.ok) {
+    detectedBackend = 'vercel';
+    return {
+      mode: 'vercel',
+      configured: res.data.configured,
+      hasAdmin: res.data.hasAdmin,
+      authenticated: res.data.authenticated,
+      email: res.data.email,
+    };
+  }
+
+  detectedBackend = 'local';
+  return {
+    mode: 'local',
+    configured: false,
+    hasAdmin: false,
+    authenticated: true,
+    email: null,
+  };
+}
+
+export async function setupAdmin(email: string, password: string): Promise<{ email: string }> {
+  const res = await apiJson<{ ok: boolean; email: string }>('/api/admin/auth', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'setup', email, password }),
+  });
+  if (!res.ok) throw new Error(res.error);
+  return { email: res.data.email };
+}
+
+export async function loginAdmin(email: string, password: string): Promise<{ email: string }> {
+  const res = await apiJson<{ ok: boolean; email: string }>('/api/admin/auth', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'login', email, password }),
+  });
+  if (!res.ok) throw new Error(res.error);
+  return { email: res.data.email };
+}
+
+export async function logoutAdmin(): Promise<void> {
+  if (getBackendMode() === 'local') return;
+  await apiJson('/api/admin/auth', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'logout' }),
+  });
+}
+
+export async function changeAdminPassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  const res = await apiJson<{ ok: boolean }>('/api/admin/auth', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'change-password', currentPassword, newPassword }),
+  });
+  if (!res.ok) throw new Error(res.error);
+}
+
+// ---------- Admin Card & Stack Curation ----------
 
 export async function upsertCard(card: CardItem): Promise<CardItem> {
   const payload: CardItem = {
@@ -158,86 +268,233 @@ export async function upsertCard(card: CardItem): Promise<CardItem> {
     createdAt: card.createdAt || new Date().toISOString(),
   };
 
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('cards')
-      .upsert(cardToRow(payload))
-      .select()
-      .single();
-    if (error) throw error;
-    return rowToCard(data as CardRow);
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ card: CardItem }>('/api/admin/cards', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'upsert', card: payload }),
+    });
+    if (!res.ok) throw new Error(res.error);
+    return res.data.card;
   }
 
   const overrides = lsRead<Record<string, CardItem>>(LS_CARDS, {});
   overrides[payload.id] = payload;
   lsWrite(LS_CARDS, overrides);
+  const deleted = lsRead<string[]>(LS_DELETED_CARDS, []).filter((id) => id !== payload.id);
+  lsWrite(LS_DELETED_CARDS, deleted);
   syncChannel?.postMessage({ type: 'cards-updated' });
   return payload;
 }
 
-export async function seedSupabaseCards(): Promise<number> {
-  if (!supabase) return SEED_CARDS.length;
-  const rows = SEED_CARDS.map(cardToRow);
-  const { error } = await supabase.from('cards').upsert(rows, { onConflict: 'id' });
-  if (error) throw error;
-  return rows.length;
+export async function moveCardStack(id: string, stackId: StackId): Promise<CardItem> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ card: CardItem }>('/api/admin/cards', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'move', id, stackId }),
+    });
+    if (!res.ok) throw new Error(res.error);
+    return res.data.card;
+  }
+
+  const all = readLocalCards(true);
+  const target = all.find((c) => c.id === id);
+  if (!target) throw new Error('Card not found');
+  return upsertCard({ ...target, stackId });
 }
+
+export async function archiveCard(id: string, archived: boolean): Promise<CardItem> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ card: CardItem }>('/api/admin/cards', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'archive', id, archived }),
+    });
+    if (!res.ok) throw new Error(res.error);
+    return res.data.card;
+  }
+
+  const all = readLocalCards(true);
+  const target = all.find((c) => c.id === id);
+  if (!target) throw new Error('Card not found');
+  return upsertCard({ ...target, archived });
+}
+
+export async function deleteCard(id: string): Promise<void> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ ok: boolean }>(`/api/admin/cards?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(res.error);
+    return;
+  }
+
+  const overrides = lsRead<Record<string, CardItem>>(LS_CARDS, {});
+  delete overrides[id];
+  lsWrite(LS_CARDS, overrides);
+  const deleted = new Set(lsRead<string[]>(LS_DELETED_CARDS, []));
+  deleted.add(id);
+  lsWrite(LS_DELETED_CARDS, [...deleted]);
+  syncChannel?.postMessage({ type: 'cards-updated' });
+}
+
+export async function reseedMissingCards(): Promise<{ addedCount: number; total: number }> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ addedCount: number; total: number }>('/api/admin/cards', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'reseed' }),
+    });
+    if (!res.ok) throw new Error(res.error);
+    return res.data;
+  }
+
+  const before = lsRead<string[]>(LS_DELETED_CARDS, []).length;
+  lsWrite(LS_DELETED_CARDS, []);
+  const cards = readLocalCards(true);
+  return { addedCount: before, total: cards.length };
+}
+
+export async function upsertStack(stack: StackMeta): Promise<StackMeta[]> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ stacks: StackMeta[] }>('/api/admin/stacks', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'upsert', stack }),
+    });
+    if (!res.ok) throw new Error(res.error);
+    return res.data.stacks;
+  }
+
+  const current = readLocalStacks(true);
+  const idx = current.findIndex((s) => s.id === stack.id);
+  const next = current.slice();
+  if (idx >= 0) {
+    next[idx] = { ...next[idx], ...stack, ring: current[idx].ring };
+  } else {
+    next.push({ ...stack, ring: current.length + 1 });
+  }
+  return writeLocalStacks(next);
+}
+
+export async function reorderStacks(orderedIds: StackId[]): Promise<StackMeta[]> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ stacks: StackMeta[] }>('/api/admin/stacks', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'reorder', orderedIds }),
+    });
+    if (!res.ok) throw new Error(res.error);
+    return res.data.stacks;
+  }
+
+  const current = readLocalStacks(true);
+  const map = buildStackMap(current);
+  const ordered: StackMeta[] = [];
+  const seen = new Set<string>();
+  for (const id of orderedIds) {
+    if (map[id] && !seen.has(id)) {
+      ordered.push(map[id]);
+      seen.add(id);
+    }
+  }
+  for (const s of current) {
+    if (!seen.has(s.id)) ordered.push(s);
+  }
+  return writeLocalStacks(ordered);
+}
+
+export async function archiveStack(id: StackId, archived: boolean): Promise<StackMeta[]> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ stacks: StackMeta[] }>('/api/admin/stacks', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'archive', id, archived }),
+    });
+    if (!res.ok) throw new Error(res.error);
+    return res.data.stacks;
+  }
+
+  const current = readLocalStacks(true);
+  if (archived && current.filter((s) => s.id !== id && !s.archived).length === 0) {
+    throw new Error('At least one active stack must remain visible.');
+  }
+  return writeLocalStacks(current.map((s) => (s.id === id ? { ...s, archived } : s)));
+}
+
+export async function deleteStack(id: StackId, reassignTo?: StackId): Promise<StackMeta[]> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const params = new URLSearchParams({ id });
+    if (reassignTo) params.set('reassignTo', reassignTo);
+    const res = await apiJson<{ stacks: StackMeta[] }>(`/api/admin/stacks?${params.toString()}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(res.error);
+    return res.data.stacks;
+  }
+
+  const current = readLocalStacks(true);
+  const remaining = current.filter((s) => s.id !== id);
+  if (remaining.length === 0) throw new Error('At least one stack must remain.');
+
+  const allCards = readLocalCards(true);
+  const affected = allCards.filter((c) => c.stackId === id);
+  if (affected.length > 0) {
+    if (!reassignTo || reassignTo === id || !remaining.some((s) => s.id === reassignTo)) {
+      throw new Error('Choose another stack to receive cards before deleting.');
+    }
+    const overrides = lsRead<Record<string, CardItem>>(LS_CARDS, {});
+    for (const card of affected) {
+      overrides[card.id] = { ...card, stackId: reassignTo };
+    }
+    lsWrite(LS_CARDS, overrides);
+  }
+
+  return writeLocalStacks(remaining);
+}
+
+// ---------- Ratings & Admin Insights ----------
 
 export async function recordCardRating(cardId: string, vote: 1 | -1): Promise<void> {
   const sessionId = getSessionId();
 
-  // Group-contributed runtime cards have synthetic `grp-` IDs; map back if from catalog, skip FK failure
-  if (cardId.startsWith('grp-')) {
-    const localRatings = lsRead<CardRating[]>(LS_RATINGS, []);
-    localRatings.push({
-      id: `${Date.now()}-${Math.random()}`,
-      cardId,
-      vote,
-      sessionId,
-      createdAt: new Date().toISOString(),
+  if (getBackendMode() === 'vercel') {
+    const res = await apiJson<{ ok: boolean }>('/api/ratings', {
+      method: 'POST',
+      body: JSON.stringify({ cardId, vote, sessionId }),
     });
-    lsWrite(LS_RATINGS, localRatings);
-    return;
-  }
-
-  if (supabase) {
-    const { error } = await supabase.from('card_ratings').insert({
-      card_id: cardId,
-      vote,
-      session_id: sessionId,
-    });
-    if (!error) return;
+    if (res.ok) return;
   }
 
   const localRatings = lsRead<CardRating[]>(LS_RATINGS, []);
-  localRatings.push({
+  const filtered = localRatings.filter(
+    (r) => !(r.cardId === cardId && r.sessionId === sessionId),
+  );
+  filtered.unshift({
     id: `${Date.now()}-${Math.random()}`,
     cardId,
     vote,
     sessionId,
     createdAt: new Date().toISOString(),
   });
-  lsWrite(LS_RATINGS, localRatings);
+  lsWrite(LS_RATINGS, filtered.slice(0, 5000));
 }
 
 export async function fetchAllRatings(): Promise<CardRating[]> {
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('card_ratings')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(5000);
-    if (!error && data) {
-      return data.map((r) => ({
-        id: r.id as string,
-        cardId: r.card_id as string,
-        vote: r.vote as 1 | -1,
-        sessionId: r.session_id as string,
-        createdAt: r.created_at as string,
-      }));
-    }
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<AdminInsightsData>('/api/admin/insights');
+    if (res.ok) return res.data.ratings;
   }
   return lsRead<CardRating[]>(LS_RATINGS, []);
+}
+
+export async function fetchAdminInsights(): Promise<AdminInsightsData> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<AdminInsightsData>('/api/admin/insights');
+    if (!res.ok) throw new Error(res.error);
+    return res.data;
+  }
+
+  return {
+    stacks: readLocalStacks(true),
+    cards: readLocalCards(true),
+    ratings: lsRead<CardRating[]>(LS_RATINGS, []),
+    submissions: lsRead<GroupSubmission[]>(LS_SUBMISSIONS, []),
+  };
 }
 
 export function summarizeRatings(ratings: CardRating[]): Record<string, CardRatingSummary> {
@@ -271,6 +528,14 @@ export async function createGroupRoom(
   activeStackIds: StackId[],
   timerMinutes?: number,
 ): Promise<GroupRoom> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ room: GroupRoom }>('/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'create', activeStackIds, timerMinutes }),
+    });
+    if (res.ok) return res.data.room;
+  }
+
   const code = generateRoomCode();
   const now = new Date();
   const expiresAt = timerMinutes
@@ -285,16 +550,6 @@ export async function createGroupRoom(
     expiresAt,
   };
 
-  if (supabase) {
-    const { error } = await supabase.from('group_rooms').insert({
-      code,
-      active_stack_ids: activeStackIds,
-      timer_minutes: timerMinutes ?? null,
-      expires_at: expiresAt ?? null,
-    });
-    if (!error) return room;
-  }
-
   const rooms = lsRead<Record<string, GroupRoom>>(LS_ROOMS, {});
   rooms[code] = room;
   lsWrite(LS_ROOMS, rooms);
@@ -303,21 +558,9 @@ export async function createGroupRoom(
 
 export async function fetchGroupRoom(code: string): Promise<GroupRoom | null> {
   const normalized = code.trim().toUpperCase();
-  if (supabase) {
-    const { data, error } = await supabase
-      .from('group_rooms')
-      .select('*')
-      .eq('code', normalized)
-      .maybeSingle();
-    if (!error && data) {
-      return {
-        code: data.code as string,
-        createdAt: data.created_at as string,
-        activeStackIds: (data.active_stack_ids as StackId[]) || [],
-        timerMinutes: (data.timer_minutes as number | null) ?? undefined,
-        expiresAt: (data.expires_at as string | null) ?? undefined,
-      };
-    }
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ room: GroupRoom }>(`/api/rooms?code=${encodeURIComponent(normalized)}`);
+    if (res.ok) return res.data.room;
   }
 
   const rooms = lsRead<Record<string, GroupRoom>>(LS_ROOMS, {});
@@ -335,37 +578,19 @@ export async function submitGroupQuestion(input: {
   const trimmedText = input.text.trim();
   const authorName = input.authorName?.trim() || undefined;
 
-  if (supabase) {
-    // Ensure room exists for seamless ad-hoc join links
-    await supabase
-      .from('group_rooms')
-      .upsert({ code: normalizedRoom, active_stack_ids: [] }, { onConflict: 'code' });
-
-    const { data, error } = await supabase
-      .from('group_submissions')
-      .insert({
-        room_code: normalizedRoom,
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ submission: GroupSubmission }>('/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'submit',
+        roomCode: normalizedRoom,
         text: trimmedText,
         language: input.language,
-        author_name: authorName ?? null,
-        source_card_id: input.sourceCardId ?? null,
-      })
-      .select()
-      .single();
-
-    if (!error && data) {
-      return {
-        id: data.id as string,
-        roomCode: data.room_code as string,
-        text: data.text as string,
-        language: data.language as Language,
-        authorName: (data.author_name as string | null) ?? undefined,
-        sourceCardId: (data.source_card_id as string | null) ?? undefined,
-        status: data.status as GroupSubmission['status'],
-        promotedStackId: (data.promoted_stack_id as StackId | null) ?? undefined,
-        createdAt: data.created_at as string,
-      };
-    }
+        authorName,
+        sourceCardId: input.sourceCardId,
+      }),
+    });
+    if (res.ok) return res.data.submission;
   }
 
   const sub: GroupSubmission = {
@@ -389,27 +614,15 @@ export async function submitGroupQuestion(input: {
 export async function fetchSubmissions(roomCode?: string): Promise<GroupSubmission[]> {
   const normalized = roomCode?.trim().toUpperCase();
 
-  if (supabase) {
-    let query = supabase
-      .from('group_submissions')
-      .select('*')
-      .order('created_at', { ascending: false });
+  if ((await ensureBackendProbed()) === 'vercel') {
     if (normalized) {
-      query = query.eq('room_code', normalized);
-    }
-    const { data, error } = await query;
-    if (!error && data) {
-      return data.map((d) => ({
-        id: d.id as string,
-        roomCode: d.room_code as string,
-        text: d.text as string,
-        language: d.language as Language,
-        authorName: (d.author_name as string | null) ?? undefined,
-        sourceCardId: (d.source_card_id as string | null) ?? undefined,
-        status: d.status as GroupSubmission['status'],
-        promotedStackId: (d.promoted_stack_id as StackId | null) ?? undefined,
-        createdAt: d.created_at as string,
-      }));
+      const res = await apiJson<{ submissions: GroupSubmission[] }>(
+        `/api/rooms?code=${encodeURIComponent(normalized)}`,
+      );
+      if (res.ok) return res.data.submissions;
+    } else {
+      const res = await apiJson<AdminInsightsData>('/api/admin/insights');
+      if (res.ok) return res.data.submissions;
     }
   }
 
@@ -422,39 +635,7 @@ export function subscribeToRoomSubmissions(
   onSubmission: (sub: GroupSubmission) => void,
 ): () => void {
   const normalized = roomCode.trim().toUpperCase();
-
-  if (supabase) {
-    const channel = supabase
-      .channel(`room-${normalized}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'group_submissions',
-          filter: `room_code=eq.${normalized}`,
-        },
-        (payload) => {
-          const d = payload.new as Record<string, unknown>;
-          onSubmission({
-            id: d.id as string,
-            roomCode: d.room_code as string,
-            text: d.text as string,
-            language: d.language as Language,
-            authorName: (d.author_name as string | null) ?? undefined,
-            sourceCardId: (d.source_card_id as string | null) ?? undefined,
-            status: (d.status as GroupSubmission['status']) || 'pending',
-            promotedStackId: (d.promoted_stack_id as StackId | null) ?? undefined,
-            createdAt: d.created_at as string,
-          });
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }
+  let stopped = false;
 
   const onMessage = (ev: MessageEvent) => {
     if (ev.data?.type === 'submission-added' && ev.data?.roomCode === normalized) {
@@ -473,7 +654,22 @@ export function subscribeToRoomSubmissions(
   syncChannel?.addEventListener('message', onMessage);
   window.addEventListener('storage', onStorage);
 
+  // Poll Vercel room endpoint every 4s while host keeps QR room open
+  const pollTimer = window.setInterval(async () => {
+    if (stopped || getBackendMode() !== 'vercel') return;
+    const res = await apiJson<{ submissions?: GroupSubmission[] }>(
+      `/api/rooms?code=${encodeURIComponent(normalized)}`,
+    );
+    if (!stopped && res.ok && Array.isArray(res.data.submissions)) {
+      for (const sub of res.data.submissions) {
+        onSubmission(sub);
+      }
+    }
+  }, 4000);
+
   return () => {
+    stopped = true;
+    window.clearInterval(pollTimer);
     syncChannel?.removeEventListener('message', onMessage);
     window.removeEventListener('storage', onStorage);
   };
@@ -483,42 +679,29 @@ export async function updateSubmissionStatus(
   id: string,
   status: GroupSubmission['status'],
   promotedStackId?: StackId,
+  promotedCard?: CardItem,
 ): Promise<void> {
-  if (supabase) {
-    const { error } = await supabase
-      .from('group_submissions')
-      .update({
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ ok: boolean }>('/api/admin/insights', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'update-submission',
+        id,
         status,
-        promoted_stack_id: promotedStackId ?? null,
-      })
-      .eq('id', id);
-    if (error) throw error;
+        promotedStackId,
+        card: promotedCard,
+      }),
+    });
+    if (!res.ok) throw new Error(res.error);
     return;
   }
 
+  if (status === 'promoted' && promotedCard) {
+    await upsertCard(promotedCard);
+  }
   const list = lsRead<GroupSubmission[]>(LS_SUBMISSIONS, []);
   const updated = list.map((item) =>
     item.id === id ? { ...item, status, promotedStackId } : item,
   );
   lsWrite(LS_SUBMISSIONS, updated);
-}
-
-// ---------- Admin Auth helpers (Supabase) ----------
-
-export async function getAdminUser(): Promise<User | null> {
-  if (!supabase) return null;
-  const { data } = await supabase.auth.getUser();
-  return data.user ?? null;
-}
-
-export async function signInAdmin(email: string, password: string): Promise<User> {
-  if (!supabase) throw new Error('Supabase is not configured');
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error || !data.user) throw error || new Error('Sign in failed');
-  return data.user;
-}
-
-export async function signOutAdmin(): Promise<void> {
-  if (!supabase) return;
-  await supabase.auth.signOut();
 }

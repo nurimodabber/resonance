@@ -1,5 +1,6 @@
 import React, { useId } from 'react';
-import type { StackId } from '../types/deck';
+import { resolveStackIconId } from '../data/stacks';
+import type { StackIconId, StackId } from '../types/deck';
 
 interface IconProps {
   className?: string;
@@ -209,12 +210,13 @@ export const EmbossedNonagonPaper: React.FC<{
   );
 };
 
-export const StackArtwork: React.FC<{ stackId: StackId; size?: number; className?: string }> = ({
-  stackId,
-  size = 34,
-  className = '',
-}) => {
-  switch (stackId) {
+export const StackArtwork: React.FC<{
+  stackId: StackId;
+  iconId?: StackIconId;
+  size?: number;
+  className?: string;
+}> = ({ stackId, iconId, size = 34, className = '' }) => {
+  switch (resolveStackIconId(undefined, iconId ?? stackId)) {
     case 'warmup':
       // Morning sun arcs over calm horizon
       return (
@@ -233,27 +235,6 @@ export const StackArtwork: React.FC<{ stackId: StackId; size?: number; className
           <path d="M10 24a8 8 0 0 1 16 0" />
           <path d="M14 24a4 4 0 0 1 8 0" />
           <path d="M18 8v3M10.5 11.5l2 2M25.5 11.5l-2 2M8 18h2.5M25.5 18H28" />
-        </svg>
-      );
-
-    case 'reflection':
-      // Winding path & north-star compass point
-      return (
-        <svg
-          width={size}
-          height={size}
-          viewBox="0 0 36 36"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={className}
-          aria-hidden="true"
-        >
-          <circle cx="18" cy="18" r="11" />
-          <polygon points="18,10 20.5,18 18,26 15.5,18" />
-          <circle cx="18" cy="18" r="1.4" fill="currentColor" stroke="none" />
         </svg>
       );
 
@@ -333,6 +314,28 @@ export const StackArtwork: React.FC<{ stackId: StackId; size?: number; className
           <path d="M14 14a3 3 0 1 1-3-3c1.66 0 3 1.34 3 3v3c0 2.2-1.3 4-3 4.8" />
           <path d="M24 14a3 3 0 1 1-3-3c1.66 0 3 1.34 3 3v3c0 2.2-1.3 4-3 4.8" />
           <path d="M10 26.5h16" />
+        </svg>
+      );
+
+    case 'reflection':
+    default:
+      // Winding path & north-star compass point
+      return (
+        <svg
+          width={size}
+          height={size}
+          viewBox="0 0 36 36"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={className}
+          aria-hidden="true"
+        >
+          <circle cx="18" cy="18" r="11" />
+          <polygon points="18,10 20.5,18 18,26 15.5,18" />
+          <circle cx="18" cy="18" r="1.4" fill="currentColor" stroke="none" />
         </svg>
       );
   }

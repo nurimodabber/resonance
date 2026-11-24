@@ -1,13 +1,14 @@
 import React from 'react';
 import { motion } from 'motion/react';
 import { useResonance } from '../context/ResonanceContext';
-import { STACK_MAP } from '../data/stacks';
+import { getStackMetaSafe } from '../data/stacks';
 import { BookmarkIcon, CloseIcon } from './Icons';
 
 export const FavoritesDrawer: React.FC = () => {
   const {
     lang,
     favorites,
+    stackMap,
     cards,
     toggleFavorite,
     openCardDirectly,
@@ -81,7 +82,7 @@ export const FavoritesDrawer: React.FC = () => {
             </div>
           ) : (
             savedCards.map((card) => {
-              const stack = STACK_MAP[card.stackId];
+              const stack = getStackMetaSafe(stackMap, card.stackId);
               return (
                 <div
                   key={card.id}

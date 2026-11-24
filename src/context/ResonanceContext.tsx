@@ -1,9 +1,11 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { buildStackMap } from '../data/stacks';
 import {
   createGroupRoom,
-  fetchAllCards,
+  fetchCatalog,
   fetchSubmissions,
   SEED_CARDS,
+  SEED_STACKS,
   subscribeToRoomSubmissions,
 } from '../services/repository';
 import type {
@@ -13,6 +15,7 @@ import type {
   Language,
   PlayMode,
   StackId,
+  StackMeta,
   ThemeMode,
 } from '../types/deck';
 
@@ -45,7 +48,10 @@ interface ResonanceContextValue {
   setLang: (lang: Language) => void;
   theme: ThemeMode;
   toggleTheme: () => void;
+  stacks: StackMeta[];
+  stackMap: Record<StackId, StackMeta>;
   cards: CardItem[];
+  refreshCatalog: () => Promise<void>;
   refreshCards: () => Promise<void>;
   favorites: string[];
   toggleFavorite: (cardId: string) => void;
@@ -86,7 +92,9 @@ export const ResonanceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return saved === 'light' || saved === 'dark' ? saved : 'dark';
   });
 
+  const [stacks, setStacks] = useState<StackMeta[]>(SEED_STACKS);
   const [cards, setCards] = useState<CardItem[]>(SEED_CARDS);
+  const stackMap = useMemo(() => buildStackMap(stacks), [stacks]);
 
   const [favorites, setFavorites] = useState<string[]>(() => {
     try {
@@ -115,18 +123,21 @@ export const ResonanceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   });
 
-  const refreshCards = useCallback(async () => {
+  const refreshCatalog = useCallback(async () => {
     try {
-      const loaded = await fetchAllCards();
-      setCards(loaded);
+      const loaded = await fetchCatalog(false);
+      setStacks(loaded.stacks);
+      setCards(loaded.cards);
     } catch {
-      // Keep seed cards if offline/uninitialized
+      // Keep seed catalog if offline/uninitialized
     }
   }, []);
 
+  const refreshCards = refreshCatalog;
+
   useEffect(() => {
-    refreshCards();
-  }, [refreshCards]);
+    refreshCatalog();
+  }, [refreshCatalog]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -257,7 +268,10 @@ export const ResonanceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setLang,
         theme,
         toggleTheme,
+        stacks,
+        stackMap,
         cards,
+        refreshCatalog,
         refreshCards,
         favorites,
         toggleFavorite,

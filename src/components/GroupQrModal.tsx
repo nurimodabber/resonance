@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import QRCode from 'qrcode';
 import { useResonance } from '../context/ResonanceContext';
-import { STACKS } from '../data/stacks';
 import type { StackId } from '../types/deck';
 import { CheckIcon, CloseIcon, QrIcon } from './Icons';
 
@@ -15,6 +14,7 @@ const MODAL_SPRING = {
 export const GroupQrModal: React.FC = () => {
   const {
     lang,
+    stacks,
     setQrModalOpen,
     activeRoom,
     incomingSubmissions,
@@ -54,7 +54,7 @@ export const GroupQrModal: React.FC = () => {
   const currentStacks: StackId[] =
     playMode.type === 'stacks'
       ? playMode.stackIds
-      : STACKS.filter((s) => s.id !== 'quotes').map((s) => s.id);
+      : stacks.filter((s) => !s.archived && s.id !== 'quotes').map((s) => s.id);
 
   const handleCreate = async () => {
     setCreating(true);

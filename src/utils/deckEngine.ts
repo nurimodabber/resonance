@@ -1,4 +1,5 @@
-import type { CardItem, GroupSubmission, PlayMode, StackId } from '../types/deck';
+import { STACKS } from '../data/stacks';
+import type { CardItem, GroupSubmission, PlayMode, StackMeta } from '../types/deck';
 
 export function shuffleCards<T>(items: T[], rng: () => number = Math.random): T[] {
   const arr = [...items];
@@ -9,15 +10,9 @@ export function shuffleCards<T>(items: T[], rng: () => number = Math.random): T[
   return arr;
 }
 
-const JOURNEY_PHASES: StackId[][] = [
-  ['warmup'],
-  ['reflection'],
-  ['friendship', 'vulnerability', 'spirituality'],
-];
-
 /**
  * Builds the active deck queue from available cards + play mode.
- * - Guided Journey moves gently from outer ring (Warm-up) -> Reflection -> Deep core stacks.
+ * - Guided Journey moves gently from outer ring (Warm-up) -> Reflection -> Deep core stacks (including active custom stacks).
  * - Standard stack mode shuffles chosen stacks cleanly without repeats.
  * - Natural wildcards are interleaved softly every ~8 cards when playing question decks.
  */
@@ -25,8 +20,11 @@ export function buildSessionDeck(
   allCards: CardItem[],
   mode: PlayMode,
   rng: () => number = Math.random,
+  stacks: StackMeta[] = STACKS,
 ): CardItem[] {
-  const active = allCards.filter((c) => !c.archived);
+  const activeStacks = stacks.filter((s) => !s.archived);
+  const activeStackIds = new Set(activeStacks.map((s) => s.id));
+  const active = allCards.filter((c) => !c.archived && (c.kind === 'wildcard' || activeStackIds.has(c.stackId)));
   const wildcards = shuffleCards(
     active.filter((c) => c.kind === 'wildcard'),
     rng,
@@ -35,16 +33,23 @@ export function buildSessionDeck(
   let ordered: CardItem[] = [];
 
   if (mode.type === 'journey') {
+    const journeyStacks = activeStacks
+      .filter((s) => s.id !== 'quotes')
+      .sort((a, b) => a.ring - b.ring);
+    const phase1Ids = new Set(journeyStacks.filter((s) => s.ring <= 1).map((s) => s.id));
+    const phase2Ids = new Set(journeyStacks.filter((s) => s.ring === 2).map((s) => s.id));
+    const phase3Ids = new Set(journeyStacks.filter((s) => s.ring >= 3).map((s) => s.id));
+
     const phase1 = shuffleCards(
-      active.filter((c) => c.kind === 'question' && JOURNEY_PHASES[0].includes(c.stackId)),
+      active.filter((c) => c.kind === 'question' && phase1Ids.has(c.stackId)),
       rng,
     ).slice(0, 6);
     const phase2 = shuffleCards(
-      active.filter((c) => c.kind === 'question' && JOURNEY_PHASES[1].includes(c.stackId)),
+      active.filter((c) => c.kind === 'question' && phase2Ids.has(c.stackId)),
       rng,
     ).slice(0, 8);
     const phase3 = shuffleCards(
-      active.filter((c) => c.kind === 'question' && JOURNEY_PHASES[2].includes(c.stackId)),
+      active.filter((c) => c.kind === 'question' && phase3Ids.has(c.stackId)),
       rng,
     );
     ordered = [...phase1, ...phase2, ...phase3];

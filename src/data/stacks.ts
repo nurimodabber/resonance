@@ -1,9 +1,19 @@
-import type { StackId, StackMeta } from '../types/deck';
+import type { StackIconId, StackId, StackMeta } from '../types/deck';
+
+export const STACK_ICON_IDS: StackIconId[] = [
+  'warmup',
+  'reflection',
+  'vulnerability',
+  'friendship',
+  'spirituality',
+  'quotes',
+];
 
 export const STACKS: StackMeta[] = [
   {
     id: 'warmup',
     ring: 1,
+    iconId: 'warmup',
     nameDe: 'Warm-up',
     nameEn: 'Warm-up',
     subtitleDe: 'Leichter Einstieg für erste Geschichten',
@@ -14,6 +24,7 @@ export const STACKS: StackMeta[] = [
   {
     id: 'reflection',
     ring: 2,
+    iconId: 'reflection',
     nameDe: 'Reflexion & Lebensweg',
     nameEn: 'Reflection & Path',
     subtitleDe: 'Was dich geprägt hat und wohin du gehst',
@@ -24,6 +35,7 @@ export const STACKS: StackMeta[] = [
   {
     id: 'vulnerability',
     ring: 3,
+    iconId: 'vulnerability',
     nameDe: 'Verletzlichkeit',
     nameEn: 'Vulnerability',
     subtitleDe: 'Ehrliche Fragen für ruhige Augenblicke',
@@ -34,6 +46,7 @@ export const STACKS: StackMeta[] = [
   {
     id: 'friendship',
     ring: 4,
+    iconId: 'friendship',
     nameDe: 'Tiefe Freundschaft & Verbindung',
     nameEn: 'Deep Friendship & Connection',
     subtitleDe: 'Was euch verbindet und im Alltag trägt',
@@ -44,6 +57,7 @@ export const STACKS: StackMeta[] = [
   {
     id: 'spirituality',
     ring: 5,
+    iconId: 'spirituality',
     nameDe: 'Spiritualität & Sinn',
     nameEn: 'Spirituality & Meaning',
     subtitleDe: 'Sinn, Staunen und was über uns hinausweist',
@@ -54,6 +68,7 @@ export const STACKS: StackMeta[] = [
   {
     id: 'quotes',
     ring: 6,
+    iconId: 'quotes',
     nameDe: 'Zitate',
     nameEn: 'Quotes',
     subtitleDe: 'Allgemein & Ruhi Buch 1 · mit Impuls',
@@ -63,12 +78,47 @@ export const STACKS: StackMeta[] = [
   },
 ];
 
-export const STACK_MAP: Record<StackId, StackMeta> = STACKS.reduce(
-  (acc, stack) => {
-    acc[stack.id] = stack;
-    return acc;
-  },
-  {} as Record<StackId, StackMeta>,
-);
+export function buildStackMap(stacks: StackMeta[]): Record<StackId, StackMeta> {
+  return stacks.reduce(
+    (acc, stack) => {
+      acc[stack.id] = stack;
+      return acc;
+    },
+    {} as Record<StackId, StackMeta>,
+  );
+}
+
+export const STACK_MAP: Record<StackId, StackMeta> = buildStackMap(STACKS);
+
+export function resolveStackIconId(
+  stack?: Pick<StackMeta, 'id' | 'iconId'> | null,
+  fallbackId?: string,
+): StackIconId {
+  const candidate = stack?.iconId ?? stack?.id ?? fallbackId;
+  if (candidate && (STACK_ICON_IDS as string[]).includes(candidate)) {
+    return candidate as StackIconId;
+  }
+  return 'reflection';
+}
+
+export function getStackMetaSafe(
+  stackMap: Record<StackId, StackMeta>,
+  stackId: StackId,
+): StackMeta {
+  return (
+    stackMap[stackId] ??
+    STACK_MAP[stackId] ?? {
+      id: stackId,
+      ring: 99,
+      iconId: 'reflection',
+      nameDe: stackId,
+      nameEn: stackId,
+      subtitleDe: '',
+      subtitleEn: '',
+      accent: 'var(--accent)',
+      accentSoft: 'var(--accent-soft)',
+    }
+  );
+}
 
 export const WILDCARD_ACCENT = 'var(--gold)';

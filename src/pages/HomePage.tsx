@@ -10,7 +10,6 @@ import {
   StackArtwork,
 } from '../components/Icons';
 import { useResonance } from '../context/ResonanceContext';
-import { STACKS } from '../data/stacks';
 import type { StackId } from '../types/deck';
 
 const STACK_SPRING = {
@@ -69,25 +68,26 @@ const frontCardVariants = {
 };
 
 export const HomePage: React.FC = () => {
-  const { lang, cards, startPlay, setQrModalOpen } = useResonance();
+  const { lang, stacks, cards, startPlay, setQrModalOpen } = useResonance();
   const [selectedStacks, setSelectedStacks] = useState<StackId[]>([]);
 
+  const visibleStacks = useMemo(
+    () => stacks.filter((s) => !s.archived).slice().sort((a, b) => a.ring - b.ring),
+    [stacks],
+  );
+
   const stackCounts = useMemo(() => {
-    const counts: Record<StackId, number> = {
-      warmup: 0,
-      reflection: 0,
-      vulnerability: 0,
-      friendship: 0,
-      spirituality: 0,
-      quotes: 0,
-    };
+    const counts: Record<StackId, number> = {};
+    for (const s of visibleStacks) {
+      counts[s.id] = 0;
+    }
     for (const c of cards) {
       if (!c.archived && c.kind !== 'wildcard') {
         counts[c.stackId] = (counts[c.stackId] || 0) + 1;
       }
     }
     return counts;
-  }, [cards]);
+  }, [visibleStacks, cards]);
 
   const toggleSelect = (id: StackId, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -124,7 +124,11 @@ export const HomePage: React.FC = () => {
   const isDe = lang === 'de';
 
   return (
-    <main className="candlelight-halo max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-10 pt-4 pb-32 md:h-[calc(100dvh-60px)] md:min-h-[600px] md:py-4 lg:py-5 md:pb-5 md:flex md:flex-col md:gap-4 lg:gap-5 space-y-6 md:space-y-0">
+    <main
+      className={`candlelight-halo max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-10 pt-4 pb-32 ${
+        visibleStacks.length <= 6 ? 'md:h-[calc(100dvh-60px)]' : 'md:min-h-[calc(100dvh-60px)]'
+      } md:min-h-[600px] md:py-4 lg:py-5 md:pb-5 md:flex md:flex-col md:gap-4 lg:gap-5 space-y-6 md:space-y-0`}
+    >
       {/* Guided Journey Feature Card (Double-Bezel + Architectural 9-Gon Filigree) */}
       <motion.section
         initial={{ opacity: 0, y: 12, scale: 0.985 }}
@@ -219,9 +223,11 @@ export const HomePage: React.FC = () => {
           variants={gridVariants}
           initial="hidden"
           animate="show"
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-5 pt-1 md:flex-1 md:min-h-0 lg:grid-rows-2"
+          className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-5 pt-1 md:flex-1 md:min-h-0 ${
+            visibleStacks.length <= 6 ? 'lg:grid-rows-2' : 'lg:auto-rows-[minmax(216px,1fr)]'
+          }`}
         >
-          {STACKS.map((stack) => {
+          {visibleStacks.map((stack) => {
             const selected = selectedStacks.includes(stack.id);
             const count = stackCounts[stack.id] || 0;
 
@@ -336,6 +342,7 @@ export const HomePage: React.FC = () => {
                         />
                         <StackArtwork
                           stackId={stack.id}
+                          iconId={stack.iconId}
                           size={42}
                           className="relative z-10 w-9 h-9 lg:w-11 lg:h-11"
                         />

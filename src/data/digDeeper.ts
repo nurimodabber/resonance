@@ -5,7 +5,7 @@ export interface FollowUpPrompt {
   en: string;
 }
 
-export const DIG_DEEPER_PROMPTS: Record<StackId, FollowUpPrompt[]> = {
+export const DIG_DEEPER_PROMPTS: Record<string, FollowUpPrompt[]> = {
   warmup: [
     {
       de: 'Was genau macht diesen Moment oder dieses Detail für dich so lebendig?',

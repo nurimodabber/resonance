@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { CheckIcon, ChevronLeftIcon } from '../components/Icons';
 import { useResonance } from '../context/ResonanceContext';
-import { STACKS, STACK_MAP } from '../data/stacks';
+import { getStackMetaSafe } from '../data/stacks';
 import { submitGroupQuestion } from '../services/repository';
 import type { StackId } from '../types/deck';
 
@@ -10,7 +10,7 @@ interface JoinRoomPageProps {
 }
 
 export const JoinRoomPage: React.FC<JoinRoomPageProps> = ({ roomCode }) => {
-  const { lang, cards, navigate } = useResonance();
+  const { lang, stacks, stackMap, cards, navigate } = useResonance();
   const [tab, setTab] = useState<'write' | 'browse'>('write');
   const [questionText, setQuestionText] = useState('');
   const [authorName, setAuthorName] = useState('');
@@ -245,17 +245,19 @@ export const JoinRoomPage: React.FC<JoinRoomPageProps> = ({ roomCode }) => {
                   }}
                 >
                   <option value="all">{isDe ? 'Alle Stapel' : 'All stacks'}</option>
-                  {STACKS.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {isDe ? s.nameDe : s.nameEn}
-                    </option>
-                  ))}
+                  {stacks
+                    .filter((s) => !s.archived)
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {isDe ? s.nameDe : s.nameEn}
+                      </option>
+                    ))}
                 </select>
               </div>
 
               <div className="max-h-[360px] overflow-y-auto space-y-2 pr-1">
                 {browseableCards.slice(0, 45).map((card) => {
-                  const stack = STACK_MAP[card.stackId];
+                  const stack = getStackMetaSafe(stackMap, card.stackId);
                   const added = addedCardIds.includes(card.id);
                   const text = isDe ? card.de : card.en;
 

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
+    "@vercel/blob": "^2.9.0",
     "lucide-react": "^0.475.0",
     "motion": "^14.14.0",
     "qrcode": "^1.5.4",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.9",
+    "@types/node": "^26.6.7",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",

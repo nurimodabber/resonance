@@ -10,8 +10,8 @@ import {
   type PanInfo,
 } from 'motion/react';
 import { pickDigDeeper } from '../data/digDeeper';
-import { STACK_MAP, WILDCARD_ACCENT } from '../data/stacks';
-import type { CardItem, Language } from '../types/deck';
+import { getStackMetaSafe, STACK_MAP, WILDCARD_ACCENT } from '../data/stacks';
+import type { CardItem, Language, StackId, StackMeta } from '../types/deck';
 import {
   BookmarkIcon,
   ChevronRightIcon,
@@ -35,6 +35,7 @@ interface CardDeckProps {
   canUndo: boolean;
   isFavorite: boolean;
   transitionMeta: CardTransitionMeta;
+  stackMap?: Record<StackId, StackMeta>;
   onAdvance: (vote: -1 | 0 | 1) => void;
   onUndo: () => void;
   onToggleFavorite: () => void;
@@ -612,6 +613,7 @@ export const CardDeck: React.FC<CardDeckProps> = ({
   canUndo,
   isFavorite,
   transitionMeta,
+  stackMap = STACK_MAP,
   onAdvance,
   onUndo,
   onToggleFavorite,
@@ -627,7 +629,7 @@ export const CardDeck: React.FC<CardDeckProps> = ({
   const upHintScale = useTransform(dragX, [0, 16, SWIPE_THRESHOLD], [1, 1, 1.14]);
   const upHintGlow = useTransform(dragX, [0, 16, SWIPE_THRESHOLD], [0, 0, 1]);
 
-  const stack = STACK_MAP[card.stackId];
+  const stack = getStackMetaSafe(stackMap, card.stackId);
   const isWildcard = card.kind === 'wildcard';
   const accentColor = isWildcard ? WILDCARD_ACCENT : stack.accent;
 

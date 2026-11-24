@@ -1,10 +1,12 @@
-export type StackId =
+export type StackIconId =
   | 'warmup'
   | 'reflection'
   | 'vulnerability'
   | 'friendship'
   | 'spirituality'
   | 'quotes';
+
+export type StackId = string;
 
 export type QuoteSubdeck = 'general' | 'ruhi';
 export type RuhiChapter = 1 | 2 | 3;
@@ -14,13 +16,15 @@ export type ThemeMode = 'dark' | 'light';
 
 export interface StackMeta {
   id: StackId;
-  ring: number; // 1 = outer ring, 5 = core, 6 = wisdom companion
+  ring: number; // 1 = outer ring, 5 = core, 6 = wisdom companion, 7+ = custom
+  iconId?: StackIconId;
   nameDe: string;
   nameEn: string;
   subtitleDe: string;
   subtitleEn: string;
   accent: string;
   accentSoft: string;
+  archived?: boolean;
 }
 
 export interface CardItem {

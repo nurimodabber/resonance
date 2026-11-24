@@ -12,6 +12,8 @@ export const PlayPage: React.FC = () => {
   const {
     lang,
     toggleLang,
+    stacks,
+    stackMap,
     cards,
     playMode,
     startPlay,
@@ -33,7 +35,7 @@ export const PlayPage: React.FC = () => {
 
   // Build deck whenever mode, catalog, or reshuffle changes
   useEffect(() => {
-    const built = buildSessionDeck(cards, playMode);
+    const built = buildSessionDeck(cards, playMode, Math.random, stacks);
 
     if (focusCardId) {
       const target = cards.find((c) => c.id === focusCardId);
@@ -48,7 +50,7 @@ export const PlayPage: React.FC = () => {
 
     setQueue(built);
     setIndex(0);
-  }, [cards, playMode, sessionSeed, focusCardId, clearFocusCard]);
+  }, [cards, stacks, playMode, sessionSeed, focusCardId, clearFocusCard]);
 
   // Mix incoming QR group questions seamlessly ahead of the current card
   useEffect(() => {
@@ -234,6 +236,7 @@ export const PlayPage: React.FC = () => {
             canUndo={index > 0}
             isFavorite={isFavorite(activeCard.id)}
             transitionMeta={transitionMeta}
+            stackMap={stackMap}
             onAdvance={handleAdvance}
             onUndo={handleUndo}
             onToggleFavorite={() => toggleFavorite(activeCard.id)}
