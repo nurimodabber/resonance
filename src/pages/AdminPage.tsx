@@ -712,10 +712,11 @@ export const AdminPage: React.FC = () => {
     try {
       const res = await reseedMissingCards();
       await Promise.all([loadAdminData(), refreshCatalog()]);
+      const updated = res.updatedCount ?? 0;
       notifyOk(
         isDe
-          ? `${res.addedCount} fehlende Standardkarten wiederhergestellt (${res.total} gesamt).`
-          : `Restored ${res.addedCount} missing baseline cards (${res.total} total).`,
+          ? `${res.addedCount} fehlende Standardkarten wiederhergestellt, ${updated} Quellen aktualisiert (${res.total} gesamt).`
+          : `Restored ${res.addedCount} missing baseline cards, refreshed ${updated} quote sources (${res.total} total).`,
       );
     } catch (err) {
       notifyErr(err);

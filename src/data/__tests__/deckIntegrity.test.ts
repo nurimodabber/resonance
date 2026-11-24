@@ -142,8 +142,23 @@ describe('Resonance Curated Deck Integrity', () => {
         quote.author?.includes('Universal House of Justice');
 
       if (isBahaiAuthor) {
-        expect(quote.sourceUrlDe?.startsWith('https://bibliothek.bahai.de/')).toBe(true);
-        expect(quote.sourceUrlEn?.startsWith('https://www.bahai.org/library')).toBe(true);
+        const allowHomepageDe = new Set(['R1_C2_1', 'B9', 'B10']);
+        if (allowHomepageDe.has(quote.id)) {
+          expect(quote.sourceUrlDe?.startsWith('https://bibliothek.bahai.de/')).toBe(true);
+        } else {
+          expect(quote.sourceUrlDe?.startsWith('https://bibliothek.bahai.de/pubReader.php?')).toBe(
+            true,
+          );
+        }
+
+        if (quote.id === 'B9') {
+          expect(quote.sourceUrlEn).toBe('https://www.bahai.org/library');
+        } else {
+          const isDeepEn =
+            quote.sourceUrlEn?.startsWith('https://www.bahai.org/library/') ||
+            quote.sourceUrlEn?.startsWith('https://www.bahai.org/beliefs/');
+          expect(isDeepEn).toBe(true);
+        }
       }
     }
 

@@ -20,14 +20,67 @@ export async function POST(request: Request): Promise<Response> {
     const validStackIds = new Set(stacks.map((s) => s.id));
 
     if (action === 'reseed') {
+      const seedById = new Map(SEED_CARDS.map((c) => [c.id, c]));
+      const staleUrls = new Set([
+        'https://bibliothek.bahai.de/',
+        'https://www.bahai.org/library',
+        'https://www.bahai.org/library/',
+        'https://www.bahai.org/library/authoritative-texts/compilations/importance-prayer-meditation-devotional-attitude/3',
+        'https://bibliothek.bahai.de/pubReader.php?parLangUri=sho-adj-de-42',
+        'https://bibliothek.bahai.de/pubReader.php?parLangUri=sho-adj-de-45',
+        'https://bibliothek.bahai.de/pubReader.php?parLangUri=bah-gwb-de-136:1',
+        'https://www.bahai.org/library/authoritative-texts/abdul-baha/selections-writings-abdul-baha/10',
+        'https://bibliothek.bahai.de/pubReader.php?parLangUri=abd-swa-de-15:1',
+        'https://www.bahai.org/library/authoritative-texts/the-universal-house-of-justice/messages/20100421_001/1',
+      ]);
+      const verifiedWordingSyncIds = new Set(['R1_C1_12', 'Q18', 'NB3', 'NB4']);
+
+      let updatedCount = 0;
+      const nextCards = cards.map((existing) => {
+        const seed = seedById.get(existing.id);
+        if (!seed || seed.kind !== 'quote') return existing;
+
+        const metadataDiffers =
+          existing.author !== seed.author ||
+          existing.sourceLabelDe !== seed.sourceLabelDe ||
+          existing.sourceLabelEn !== seed.sourceLabelEn ||
+          existing.sourceUrlDe !== seed.sourceUrlDe ||
+          existing.sourceUrlEn !== seed.sourceUrlEn;
+
+        const hadUnverifiedUrl =
+          (existing.sourceUrlDe && staleUrls.has(existing.sourceUrlDe)) ||
+          (existing.sourceUrlEn && staleUrls.has(existing.sourceUrlEn));
+
+        const syncVerbatimWording =
+          verifiedWordingSyncIds.has(existing.id) && existing.de !== seed.de;
+
+        if (!metadataDiffers && !hadUnverifiedUrl && !syncVerbatimWording) {
+          return existing;
+        }
+
+        updatedCount += 1;
+        return {
+          ...existing,
+          ...(hadUnverifiedUrl || syncVerbatimWording ? { de: seed.de, en: seed.en } : {}),
+          author: seed.author,
+          sourceLabelDe: seed.sourceLabelDe,
+          sourceLabelEn: seed.sourceLabelEn,
+          sourceUrlDe: seed.sourceUrlDe,
+          sourceUrlEn: seed.sourceUrlEn,
+        };
+      });
+
       const existingIds = new Set(cards.map((c) => c.id));
       const missing = SEED_CARDS.filter((c) => !existingIds.has(c.id));
-      if (missing.length > 0) {
-        await writeJsonBlob(CARDS_PATH, [...cards, ...missing]);
+      const finalCards = missing.length > 0 ? [...nextCards, ...missing] : nextCards;
+
+      if (missing.length > 0 || updatedCount > 0) {
+        await writeJsonBlob(CARDS_PATH, finalCards);
       }
       return jsonResponse({
         addedCount: missing.length,
-        total: cards.length + missing.length,
+        updatedCount,
+        total: finalCards.length,
       });
     }
 

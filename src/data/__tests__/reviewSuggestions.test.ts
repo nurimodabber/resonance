@@ -31,6 +31,21 @@ describe('Friend Review Suggestions Integrity', () => {
       expect(quote.author?.trim().length).toBeGreaterThan(1);
       expect(quote.promptDe?.trim().length).toBeGreaterThan(5);
       expect(quote.promptEn?.trim().length).toBeGreaterThan(5);
+
+      const isBahaiAuthor =
+        quote.author?.includes('Bahá') ||
+        quote.author?.includes('Universal House of Justice');
+
+      if (isBahaiAuthor) {
+        expect(quote.sourceLabelDe?.trim().length).toBeGreaterThan(5);
+        expect(quote.sourceLabelEn?.trim().length).toBeGreaterThan(5);
+        expect(quote.sourceUrlDe?.startsWith('https://bibliothek.bahai.de/pubReader.php?')).toBe(
+          true,
+        );
+        expect(
+          quote.sourceUrlEn?.startsWith('https://www.bahai.org/library/authoritative-texts/'),
+        ).toBe(true);
+      }
     }
   });
 

@@ -288,7 +288,6 @@ const DraggableCardFace: React.FC<DraggableCardFaceProps> = ({
   const activeText = lang === 'de' ? card.de : card.en;
   const isLongText = isQuote ? activeText.length > 220 : activeText.length > 130;
 
-  const sourceUrl = lang === 'de' ? card.sourceUrlDe : card.sourceUrlEn;
   const sourceLabel = lang === 'de' ? card.sourceLabelDe : card.sourceLabelEn;
   const quotePrompt = lang === 'de' ? card.promptDe : card.promptEn;
   const followUp = pickDigDeeper(card.stackId, digCount - 1);
@@ -419,32 +418,65 @@ const DraggableCardFace: React.FC<DraggableCardFaceProps> = ({
                 {activeText}
               </blockquote>
 
-              {card.author && (
-                <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs sm:text-sm pt-1">
-                  <span className="font-medium" style={{ color: 'var(--gold)' }}>
-                    {card.author}
-                  </span>
-                  {sourceUrl && sourceLabel && (
-                    <>
-                      <span style={{ color: 'var(--ink-muted)' }}>·</span>
-                      <a
-                        href={sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        className="inline-flex items-center gap-1 underline decoration-dotted underline-offset-2 hover:opacity-80"
-                        style={{ color: 'var(--ink-muted)' }}
-                      >
-                        <span>{sourceLabel}</span>
-                        <ExternalLinkIcon size={12} />
-                      </a>
-                    </>
+              {(card.author || sourceLabel || card.sourceUrlDe || card.sourceUrlEn) && (
+                <div className="flex flex-col items-center gap-2 text-xs sm:text-sm pt-1">
+                  {(card.author || sourceLabel) && (
+                    <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+                      {card.author && (
+                        <span className="font-medium" style={{ color: 'var(--gold)' }}>
+                          {card.author}
+                        </span>
+                      )}
+                      {card.author && sourceLabel && (
+                        <span style={{ color: 'var(--ink-muted)' }}>·</span>
+                      )}
+                      {sourceLabel && (
+                        <span style={{ color: 'var(--ink-muted)' }}>{sourceLabel}</span>
+                      )}
+                    </div>
                   )}
-                  {!sourceUrl && sourceLabel && (
-                    <>
-                      <span style={{ color: 'var(--ink-muted)' }}>·</span>
-                      <span style={{ color: 'var(--ink-muted)' }}>{sourceLabel}</span>
-                    </>
+
+                  {(card.sourceUrlDe || card.sourceUrlEn) && (
+                    <div className="flex flex-wrap items-center justify-center gap-1.5">
+                      {card.sourceUrlDe && (
+                        <a
+                          href={card.sourceUrlDe}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={card.sourceLabelDe ? `${card.sourceLabelDe} (DE)` : 'Original (DE)'}
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-opacity hover:opacity-80"
+                          style={{
+                            border: '1px solid var(--gold-hairline)',
+                            backgroundColor: lang === 'de' ? 'var(--gold-soft)' : 'transparent',
+                            color: lang === 'de' ? 'var(--gold)' : 'var(--ink-muted)',
+                          }}
+                        >
+                          <span>Original (DE)</span>
+                          <ExternalLinkIcon size={11} />
+                        </a>
+                      )}
+                      {card.sourceUrlEn && (
+                        <a
+                          href={card.sourceUrlEn}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={card.sourceLabelEn ? `${card.sourceLabelEn} (EN)` : 'Original (EN)'}
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-opacity hover:opacity-80"
+                          style={{
+                            border: '1px solid var(--gold-hairline)',
+                            backgroundColor: lang === 'en' ? 'var(--gold-soft)' : 'transparent',
+                            color: lang === 'en' ? 'var(--gold)' : 'var(--ink-muted)',
+                          }}
+                        >
+                          <span>Original (EN)</span>
+                          <ExternalLinkIcon size={11} />
+                        </a>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

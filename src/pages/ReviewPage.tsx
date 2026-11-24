@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   CheckIcon,
+  ExternalLinkIcon,
   StackArtwork,
   ThumbDownIcon,
   ThumbUpIcon,
@@ -652,6 +653,70 @@ export const ReviewPage: React.FC = () => {
                       {card.kind === 'quote' ? `“${altText}”` : altText}
                     </p>
                   )}
+
+                  {card.kind === 'quote' &&
+                    (card.sourceLabelDe ||
+                      card.sourceLabelEn ||
+                      card.sourceUrlDe ||
+                      card.sourceUrlEn) && (
+                      <div className="flex flex-wrap items-center gap-2 pt-1.5 text-[11px]">
+                        {(isDe
+                          ? card.sourceLabelDe || card.sourceLabelEn
+                          : card.sourceLabelEn || card.sourceLabelDe) && (
+                          <span style={{ color: 'var(--ink-muted)' }}>
+                            {isDe
+                              ? card.sourceLabelDe || card.sourceLabelEn
+                              : card.sourceLabelEn || card.sourceLabelDe}
+                          </span>
+                        )}
+                        {(card.sourceUrlDe || card.sourceUrlEn) && (
+                          <div className="inline-flex flex-wrap items-center gap-1.5">
+                            {card.sourceUrlDe && (
+                              <a
+                                href={card.sourceUrlDe}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label={
+                                  card.sourceLabelDe
+                                    ? `${card.sourceLabelDe} (DE)`
+                                    : 'Original (DE)'
+                                }
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium transition-opacity hover:opacity-80"
+                                style={{
+                                  border: '1px solid var(--gold-hairline)',
+                                  backgroundColor: isDe ? 'var(--gold-soft)' : 'transparent',
+                                  color: isDe ? 'var(--gold)' : 'var(--ink-muted)',
+                                }}
+                              >
+                                <span>Original (DE)</span>
+                                <ExternalLinkIcon size={11} />
+                              </a>
+                            )}
+                            {card.sourceUrlEn && (
+                              <a
+                                href={card.sourceUrlEn}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label={
+                                  card.sourceLabelEn
+                                    ? `${card.sourceLabelEn} (EN)`
+                                    : 'Original (EN)'
+                                }
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium transition-opacity hover:opacity-80"
+                                style={{
+                                  border: '1px solid var(--gold-hairline)',
+                                  backgroundColor: !isDe ? 'var(--gold-soft)' : 'transparent',
+                                  color: !isDe ? 'var(--gold)' : 'var(--ink-muted)',
+                                }}
+                              >
+                                <span>Original (EN)</span>
+                                <ExternalLinkIcon size={11} />
+                              </a>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                 </div>
 
                 {/* Saved Change Badge */}

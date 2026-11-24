@@ -370,12 +370,19 @@ export async function deleteCard(id: string): Promise<void> {
   syncChannel?.postMessage({ type: 'cards-updated' });
 }
 
-export async function reseedMissingCards(): Promise<{ addedCount: number; total: number }> {
+export async function reseedMissingCards(): Promise<{
+  addedCount: number;
+  updatedCount?: number;
+  total: number;
+}> {
   if ((await ensureBackendProbed()) === 'vercel') {
-    const res = await apiJson<{ addedCount: number; total: number }>('/api/admin/cards', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'reseed' }),
-    });
+    const res = await apiJson<{ addedCount: number; updatedCount?: number; total: number }>(
+      '/api/admin/cards',
+      {
+        method: 'POST',
+        body: JSON.stringify({ action: 'reseed' }),
+      },
+    );
     if (!res.ok) throw new Error(res.error);
     return res.data;
   }
