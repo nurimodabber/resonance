@@ -342,3 +342,12 @@ select:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
