@@ -34,6 +34,7 @@ export const IslandNav: React.FC = () => {
 
   const isJoin = route.startsWith('/join');
   const isAdmin = route.startsWith('/admin');
+  const isReview = route.startsWith('/review');
   const isDe = lang === 'de';
 
   const navRoutes = [
@@ -65,7 +66,7 @@ export const IslandNav: React.FC = () => {
 
   const renderUtilityButtons = (includeDrawers: boolean) => (
     <div className="flex items-center gap-1">
-      {includeDrawers && !isJoin && (
+      {includeDrawers && !isJoin && !isReview && (
         <>
           <button
             type="button"
@@ -147,7 +148,7 @@ export const IslandNav: React.FC = () => {
         <div className="flex items-center gap-5">
           {renderBrand(28)}
 
-          {!isJoin && !isAdmin && (
+          {!isJoin && !isAdmin && !isReview && (
             <div className="inline-flex items-center gap-1 text-xs">
               {navRoutes.map((item) => (
                 <button

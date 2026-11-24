@@ -96,3 +96,49 @@ export type PlayMode =
       quoteSubdeck?: QuoteSubdeck | 'all';
       ruhiChapter?: RuhiChapter | 'all';
     };
+
+export type ReviewVote = -2 | -1 | 1 | 2;
+
+export interface ReviewEditSuggestion {
+  text: string;
+  language: Language;
+  updatedAt: string;
+}
+
+export interface ReviewerRecord {
+  reviewerId: string;
+  reviewerName?: string;
+  updatedAt: string;
+  votes: Record<string, ReviewVote>;
+  edits: Record<string, ReviewEditSuggestion>;
+}
+
+export interface AggregatedEditSuggestion {
+  id: string;
+  cardId: string;
+  reviewerId: string;
+  reviewerName?: string;
+  suggestedText: string;
+  language: Language;
+  updatedAt: string;
+  dismissed: boolean;
+}
+
+export interface ReviewCardStats {
+  cardId: string;
+  source: 'suggestion' | 'live';
+  card: CardItem;
+  up2: number;
+  up1: number;
+  down1: number;
+  down2: number;
+  voteCount: number;
+  weightedScore: number;
+  averageScore: number;
+  positiveRatio: number;
+  edits: AggregatedEditSuggestion[];
+  promoted: boolean;
+  recommended: boolean;
+}
+
+export type RecommendationPreset = 'auto' | 'top33' | 'top50' | 'top67';

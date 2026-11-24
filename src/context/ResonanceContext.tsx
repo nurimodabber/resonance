@@ -116,7 +116,9 @@ export const ResonanceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [introOpen, setIntroOpen] = useState<boolean>(() => {
     try {
       const path = getRelativeRoute();
-      if (path.startsWith('/join/') || path.startsWith('/admin')) return false;
+      if (path.startsWith('/join/') || path.startsWith('/admin') || path.startsWith('/review')) {
+        return false;
+      }
       return localStorage.getItem(LS_INTRO) !== '1';
     } catch {
       return false;

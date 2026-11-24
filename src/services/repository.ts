@@ -1,6 +1,7 @@
 import { CURATED_QUESTIONS } from '../data/questions';
 import { CURATED_QUOTES } from '../data/quotes';
 import { buildStackMap, STACKS } from '../data/stacks';
+import { aggregateReviewStats } from '../utils/reviewScoring';
 import type {
   CardItem,
   CardRating,
@@ -8,6 +9,9 @@ import type {
   GroupRoom,
   GroupSubmission,
   Language,
+  ReviewCardStats,
+  ReviewerRecord,
+  ReviewVote,
   StackId,
   StackMeta,
 } from '../types/deck';
@@ -32,12 +36,42 @@ export interface AdminInsightsData {
   submissions: GroupSubmission[];
 }
 
+export interface ReviewBundle {
+  mode: BackendMode;
+  stacks: StackMeta[];
+  liveCards: CardItem[];
+  suggestions: CardItem[];
+  promotedIds: string[];
+  myRecord: ReviewerRecord;
+}
+
+export interface ReviewerSummaryItem {
+  reviewerId: string;
+  reviewerName?: string;
+  voteCount: number;
+  editCount: number;
+  updatedAt: string;
+}
+
+export interface AdminReviewSummary {
+  reviewerCount: number;
+  reviewers: ReviewerSummaryItem[];
+  stacks: StackMeta[];
+  stats: ReviewCardStats[];
+  promotedIds: string[];
+  dismissedEditIds: string[];
+}
+
 const LS_STACKS = 'resonance.localStacks.v1';
 const LS_CARDS = 'resonance.localCards.v1';
 const LS_DELETED_CARDS = 'resonance.localDeletedCards.v1';
 const LS_RATINGS = 'resonance.localRatings.v1';
 const LS_ROOMS = 'resonance.localRooms.v1';
 const LS_SUBMISSIONS = 'resonance.localSubmissions.v1';
+const LS_REVIEWER_ID = 'resonance.reviewerId.v1';
+const LS_REVIEWER_NAME = 'resonance.reviewerName.v1';
+const LS_LOCAL_REVIEW = 'resonance.localReviewRecord.v1';
+const LS_LOCAL_REVIEW_STATE = 'resonance.localReviewState.v1';
 const LS_SESSION_ID = 'resonance.sessionId.v1';
 
 let detectedBackend: BackendMode | null = null;
@@ -704,4 +738,348 @@ export async function updateSubmissionStatus(
     item.id === id ? { ...item, status, promotedStackId } : item,
   );
   lsWrite(LS_SUBMISSIONS, updated);
+}
+
+// ---------- Friend Review (/review) & Admin Recommendation Studio ----------
+
+let reviewWriteQueue: Promise<unknown> = Promise.resolve();
+
+function enqueueReviewWrite<T>(task: () => Promise<T>): Promise<T> {
+  const next = reviewWriteQueue.then(task, task);
+  reviewWriteQueue = next.catch(() => {});
+  return next;
+}
+
+export function getReviewerId(): string {
+  if (typeof window === 'undefined') return 'ssr_reviewer_id';
+  let existing = localStorage.getItem(LS_REVIEWER_ID) || '';
+  if (/^[a-zA-Z0-9_-]{8,64}$/.test(existing)) {
+    return existing;
+  }
+  const randomPart =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID().replace(/-/g, '')
+      : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  existing = `rev_${randomPart}`.slice(0, 40);
+  localStorage.setItem(LS_REVIEWER_ID, existing);
+  return existing;
+}
+
+export function getReviewerName(): string {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem(LS_REVIEWER_NAME) || '';
+}
+
+export function setReviewerNameLocal(name: string): void {
+  if (typeof window === 'undefined') return;
+  const trimmed = name.trim().slice(0, 40);
+  if (trimmed) {
+    localStorage.setItem(LS_REVIEWER_NAME, trimmed);
+  } else {
+    localStorage.removeItem(LS_REVIEWER_NAME);
+  }
+}
+
+function readLocalReviewerRecord(): ReviewerRecord {
+  const reviewerId = getReviewerId();
+  const savedName = getReviewerName() || undefined;
+  const existing = lsRead<ReviewerRecord | null>(LS_LOCAL_REVIEW, null);
+  if (existing && existing.reviewerId) {
+    return {
+      reviewerId: existing.reviewerId,
+      reviewerName: existing.reviewerName || savedName,
+      updatedAt: existing.updatedAt || '',
+      votes: existing.votes || {},
+      edits: existing.edits || {},
+    };
+  }
+  return {
+    reviewerId,
+    reviewerName: savedName,
+    updatedAt: '',
+    votes: {},
+    edits: {},
+  };
+}
+
+function readLocalReviewState(): { promotedIds: string[]; dismissedEditIds: string[] } {
+  const state = lsRead<{ promotedIds?: string[]; dismissedEditIds?: string[] }>(
+    LS_LOCAL_REVIEW_STATE,
+    {},
+  );
+  return {
+    promotedIds: Array.isArray(state.promotedIds) ? state.promotedIds : [],
+    dismissedEditIds: Array.isArray(state.dismissedEditIds) ? state.dismissedEditIds : [],
+  };
+}
+
+export async function fetchReviewBundle(): Promise<ReviewBundle> {
+  const reviewerId = getReviewerId();
+  const res = await apiJson<ReviewBundle>(
+    `/api/review?reviewerId=${encodeURIComponent(reviewerId)}`,
+  );
+  if (res.ok && res.data.mode === 'vercel') {
+    detectedBackend = 'vercel';
+    if (res.data.myRecord?.reviewerName) {
+      setReviewerNameLocal(res.data.myRecord.reviewerName);
+    }
+    return res.data;
+  }
+
+  if (!res.ok && (res.status === 404 || res.status === 0)) {
+    detectedBackend = 'local';
+  }
+
+  const { REVIEW_SUGGESTIONS } = await import('../data/reviewSuggestions');
+  const stacks = readLocalStacks(false);
+  const liveCards = readLocalCards(false);
+  const state = readLocalReviewState();
+  const liveIds = new Set(liveCards.map((c) => c.id));
+  const promotedSet = new Set([...state.promotedIds, ...liveIds]);
+
+  return {
+    mode: 'local',
+    stacks,
+    liveCards,
+    suggestions: REVIEW_SUGGESTIONS.filter((s) => !promotedSet.has(s.id)),
+    promotedIds: [...promotedSet],
+    myRecord: readLocalReviewerRecord(),
+  };
+}
+
+export async function saveReviewVote(
+  cardId: string,
+  vote: ReviewVote | 0,
+  reviewerName?: string,
+): Promise<string> {
+  const reviewerId = getReviewerId();
+  return enqueueReviewWrite(async () => {
+    const now = new Date().toISOString();
+    const localRec = readLocalReviewerRecord();
+    if (reviewerName !== undefined) {
+      setReviewerNameLocal(reviewerName);
+      localRec.reviewerName = reviewerName.trim().slice(0, 40) || undefined;
+    }
+    if (vote === 0) {
+      delete localRec.votes[cardId];
+    } else {
+      localRec.votes[cardId] = vote;
+    }
+    localRec.updatedAt = now;
+    lsWrite(LS_LOCAL_REVIEW, localRec);
+
+    if ((await ensureBackendProbed()) === 'vercel') {
+      const res = await apiJson<{ ok: boolean; updatedAt?: string }>('/api/review', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'vote',
+          reviewerId,
+          reviewerName: localRec.reviewerName,
+          cardId,
+          vote,
+        }),
+      });
+      if (!res.ok) throw new Error(res.error);
+      return res.data.updatedAt || now;
+    }
+    return now;
+  });
+}
+
+export async function saveReviewEditSuggestion(
+  cardId: string,
+  suggestedText: string,
+  language: Language,
+  reviewerName?: string,
+): Promise<string> {
+  const reviewerId = getReviewerId();
+  return enqueueReviewWrite(async () => {
+    const now = new Date().toISOString();
+    const trimmed = suggestedText.trim();
+    const localRec = readLocalReviewerRecord();
+    if (reviewerName !== undefined) {
+      setReviewerNameLocal(reviewerName);
+      localRec.reviewerName = reviewerName.trim().slice(0, 40) || undefined;
+    }
+    if (!trimmed) {
+      delete localRec.edits[cardId];
+    } else {
+      localRec.edits[cardId] = { text: trimmed, language, updatedAt: now };
+    }
+    localRec.updatedAt = now;
+    lsWrite(LS_LOCAL_REVIEW, localRec);
+
+    if ((await ensureBackendProbed()) === 'vercel') {
+      const res = await apiJson<{ ok: boolean; updatedAt?: string }>('/api/review', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'suggest-edit',
+          reviewerId,
+          reviewerName: localRec.reviewerName,
+          cardId,
+          suggestedText: trimmed,
+          language,
+        }),
+      });
+      if (!res.ok) throw new Error(res.error);
+      return res.data.updatedAt || now;
+    }
+    return now;
+  });
+}
+
+export async function saveReviewerProfile(reviewerName: string): Promise<void> {
+  const reviewerId = getReviewerId();
+  setReviewerNameLocal(reviewerName);
+  const trimmed = reviewerName.trim().slice(0, 40) || undefined;
+
+  return enqueueReviewWrite(async () => {
+    const localRec = readLocalReviewerRecord();
+    localRec.reviewerName = trimmed;
+    localRec.updatedAt = new Date().toISOString();
+    lsWrite(LS_LOCAL_REVIEW, localRec);
+
+    if ((await ensureBackendProbed()) === 'vercel') {
+      const res = await apiJson<{ ok: boolean }>('/api/review', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'profile',
+          reviewerId,
+          reviewerName: trimmed,
+        }),
+      });
+      if (!res.ok) throw new Error(res.error);
+    }
+  });
+}
+
+export async function fetchAdminReviewSummary(): Promise<AdminReviewSummary> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<AdminReviewSummary>('/api/admin/review');
+    if (!res.ok) throw new Error(res.error);
+    return res.data;
+  }
+
+  const { REVIEW_SUGGESTIONS } = await import('../data/reviewSuggestions');
+  const stacks = readLocalStacks(true);
+  const liveCards = readLocalCards(true);
+  const myRec = readLocalReviewerRecord();
+  const reviewers =
+    Object.keys(myRec.votes).length > 0 || Object.keys(myRec.edits).length > 0 ? [myRec] : [];
+  const state = readLocalReviewState();
+
+  return {
+    reviewerCount: reviewers.length,
+    reviewers: reviewers.map((r) => ({
+      reviewerId: r.reviewerId,
+      reviewerName: r.reviewerName,
+      voteCount: Object.keys(r.votes).length,
+      editCount: Object.keys(r.edits).length,
+      updatedAt: r.updatedAt,
+    })),
+    stacks,
+    stats: aggregateReviewStats({
+      suggestions: REVIEW_SUGGESTIONS,
+      liveCards,
+      reviewers,
+      promotedIds: state.promotedIds,
+      dismissedEditIds: state.dismissedEditIds,
+      preset: 'auto',
+    }),
+    promotedIds: state.promotedIds,
+    dismissedEditIds: state.dismissedEditIds,
+  };
+}
+
+export async function promoteReviewSuggestions(
+  items: Array<{ id: string; stackId?: string; de?: string; en?: string }>,
+): Promise<{ addedCount: number; promotedIds: string[] }> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ ok: boolean; addedCount: number; promotedIds: string[] }>(
+      '/api/admin/review',
+      {
+        method: 'POST',
+        body: JSON.stringify({ action: 'promote', items }),
+      },
+    );
+    if (!res.ok) throw new Error(res.error);
+    return { addedCount: res.data.addedCount, promotedIds: res.data.promotedIds };
+  }
+
+  const { REVIEW_SUGGESTIONS } = await import('../data/reviewSuggestions');
+  const byId = new Map(REVIEW_SUGGESTIONS.map((c) => [c.id, c]));
+  const state = readLocalReviewState();
+  const promotedSet = new Set(state.promotedIds);
+  let addedCount = 0;
+
+  for (const item of items) {
+    const src = byId.get(item.id);
+    if (!src) continue;
+    await upsertCard({
+      ...src,
+      stackId: item.stackId || src.stackId,
+      de: item.de?.trim() || src.de,
+      en: item.en?.trim() || src.en,
+      isCustom: true,
+      archived: false,
+      createdAt: new Date().toISOString(),
+    });
+    promotedSet.add(item.id);
+    addedCount += 1;
+  }
+
+  const nextState = { ...state, promotedIds: [...promotedSet] };
+  lsWrite(LS_LOCAL_REVIEW_STATE, nextState);
+  return { addedCount, promotedIds: nextState.promotedIds };
+}
+
+export async function applyReviewEditSuggestion(input: {
+  cardId: string;
+  language: Language;
+  newText: string;
+  editId: string;
+}): Promise<void> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ ok: boolean }>('/api/admin/review', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'apply-edit', ...input }),
+    });
+    if (!res.ok) throw new Error(res.error);
+    return;
+  }
+
+  const live = readLocalCards(true);
+  const existing = live.find((c) => c.id === input.cardId);
+  if (existing) {
+    await upsertCard({ ...existing, [input.language]: input.newText });
+  } else {
+    const { REVIEW_SUGGESTIONS } = await import('../data/reviewSuggestions');
+    const src = REVIEW_SUGGESTIONS.find((c) => c.id === input.cardId);
+    if (src) {
+      await upsertCard({
+        ...src,
+        [input.language]: input.newText,
+        isCustom: true,
+        archived: false,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+  await dismissReviewEditSuggestion(input.editId);
+}
+
+export async function dismissReviewEditSuggestion(editId: string): Promise<void> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ ok: boolean }>('/api/admin/review', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'dismiss-edit', editId }),
+    });
+    if (!res.ok) throw new Error(res.error);
+    return;
+  }
+
+  const state = readLocalReviewState();
+  const next = new Set(state.dismissedEditIds);
+  next.add(editId);
+  lsWrite(LS_LOCAL_REVIEW_STATE, { ...state, dismissedEditIds: [...next] });
 }

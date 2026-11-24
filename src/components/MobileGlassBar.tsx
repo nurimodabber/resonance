@@ -25,8 +25,8 @@ export const MobileGlassBar: React.FC = () => {
     incomingSubmissions,
   } = useResonance();
 
-  // Hide bottom tab bar on guest QR submission and internal admin views
-  if (route.startsWith('/join') || route.startsWith('/admin')) {
+  // Hide bottom tab bar on guest QR submission, friend review, and internal admin views
+  if (route.startsWith('/join') || route.startsWith('/admin') || route.startsWith('/review')) {
     return null;
   }
 

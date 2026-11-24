@@ -8,16 +8,20 @@ import {
 import { useResonance } from '../context/ResonanceContext';
 import { buildStackMap, getStackMetaSafe, STACK_ICON_IDS } from '../data/stacks';
 import {
+  applyReviewEditSuggestion,
   archiveCard,
   archiveStack,
   changeAdminPassword,
   deleteCard,
   deleteStack,
+  dismissReviewEditSuggestion,
   fetchAdminAuthStatus,
   fetchAdminInsights,
+  fetchAdminReviewSummary,
   loginAdmin,
   logoutAdmin,
   moveCardStack,
+  promoteReviewSuggestions,
   reorderStacks,
   reseedMissingCards,
   SEED_CARDS,
@@ -27,20 +31,27 @@ import {
   upsertCard,
   upsertStack,
   type AdminAuthStatus,
+  type AdminReviewSummary,
 } from '../services/repository';
+import {
+  computeRecommendedIdSet,
+  reviewCategoryKey,
+  sortReviewStats,
+} from '../utils/reviewScoring';
 import type {
   CardItem,
   CardKind,
   CardRating,
   GroupSubmission,
   QuoteSubdeck,
+  RecommendationPreset,
   RuhiChapter,
   StackIconId,
   StackId,
   StackMeta,
 } from '../types/deck';
 
-type AdminTab = 'cards' | 'stacks' | 'insights' | 'inbox' | 'security';
+type AdminTab = 'cards' | 'stacks' | 'review' | 'insights' | 'inbox' | 'security';
 
 function slugifyStackId(input: string): string {
   return input
@@ -105,16 +116,28 @@ export const AdminPage: React.FC = () => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
 
+  // Friend Review tab state
+  const [reviewSummary, setReviewSummary] = useState<AdminReviewSummary | null>(null);
+  const [reviewPreset, setReviewPreset] = useState<RecommendationPreset>('auto');
+  const [reviewCategory, setReviewCategory] = useState<string>('all');
+  const [reviewSource, setReviewSource] = useState<'suggestions' | 'live'>('suggestions');
+  const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(new Set());
+  const [copiedReviewLink, setCopiedReviewLink] = useState(false);
+
   const stackMap = useMemo(() => buildStackMap(adminStacks), [adminStacks]);
   const ratingSummary = useMemo(() => summarizeRatings(ratings), [ratings]);
 
   const loadAdminData = useCallback(async () => {
     try {
-      const data = await fetchAdminInsights();
-      setAdminStacks(data.stacks);
-      setAdminCards(data.cards);
-      setRatings(data.ratings);
-      setSubmissions(data.submissions);
+      const [insightsRes, reviewRes] = await Promise.all([
+        fetchAdminInsights(),
+        fetchAdminReviewSummary(),
+      ]);
+      setAdminStacks(insightsRes.stacks);
+      setAdminCards(insightsRes.cards);
+      setRatings(insightsRes.ratings);
+      setSubmissions(insightsRes.submissions);
+      setReviewSummary(reviewRes);
     } catch (err) {
       setErrorBanner(err instanceof Error ? err.message : 'Failed to load admin data');
     }
@@ -202,6 +225,142 @@ export const AdminPage: React.FC = () => {
     () => submissions.filter((s) => s.status === 'pending'),
     [submissions],
   );
+
+  const recommendedReviewIds = useMemo(() => {
+    if (!reviewSummary) return new Set<string>();
+    return computeRecommendedIdSet(reviewSummary.stats, reviewPreset);
+  }, [reviewSummary, reviewPreset]);
+
+  useEffect(() => {
+    setSelectedReviewIds(new Set(recommendedReviewIds));
+  }, [recommendedReviewIds]);
+
+  const reviewOverview = useMemo(() => {
+    const stats = reviewSummary?.stats || [];
+    let ratedSuggestions = 0;
+    let totalSuggestions = 0;
+    let pendingEdits = 0;
+    for (const s of stats) {
+      if (s.source === 'suggestion') {
+        totalSuggestions += 1;
+        if (s.voteCount > 0) ratedSuggestions += 1;
+      }
+      pendingEdits += s.edits.filter((e) => !e.dismissed).length;
+    }
+    return { ratedSuggestions, totalSuggestions, pendingEdits };
+  }, [reviewSummary]);
+
+  const filteredReviewStats = useMemo(() => {
+    if (!reviewSummary) return [];
+    const base = reviewSummary.stats.filter((item) => {
+      if (item.source !== reviewSource) return false;
+      if (reviewCategory !== 'all' && reviewCategoryKey(item.card) !== reviewCategory) {
+        return false;
+      }
+      return true;
+    });
+    return sortReviewStats(base);
+  }, [reviewSummary, reviewSource, reviewCategory]);
+
+  const visiblePendingEdits = useMemo(() => {
+    if (!reviewSummary) return [];
+    const out: Array<{
+      stat: AdminReviewSummary['stats'][number];
+      edit: AdminReviewSummary['stats'][number]['edits'][number];
+    }> = [];
+    for (const stat of reviewSummary.stats) {
+      if (stat.source !== reviewSource) continue;
+      if (reviewCategory !== 'all' && reviewCategoryKey(stat.card) !== reviewCategory) continue;
+      for (const edit of stat.edits) {
+        if (!edit.dismissed) {
+          out.push({ stat, edit });
+        }
+      }
+    }
+    return out;
+  }, [reviewSummary, reviewSource, reviewCategory]);
+
+  const selectedVisibleReviewIds = useMemo(() => {
+    if (reviewSource !== 'suggestions') return [];
+    return filteredReviewStats
+      .filter((s) => !s.promoted && selectedReviewIds.has(s.cardId))
+      .map((s) => s.cardId);
+  }, [filteredReviewStats, selectedReviewIds, reviewSource]);
+
+  const handleToggleSelectReviewCard = (cardId: string) => {
+    setSelectedReviewIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(cardId)) next.delete(cardId);
+      else next.add(cardId);
+      return next;
+    });
+  };
+
+  const handlePromoteReviewIds = async (ids: string[]) => {
+    if (ids.length === 0 || busyAction) return;
+    setBusyAction(true);
+    try {
+      const res = await promoteReviewSuggestions(ids.map((id) => ({ id })));
+      await Promise.all([loadAdminData(), refreshCatalog()]);
+      notifyOk(
+        isDe
+          ? `${res.addedCount} ausgewählte Vorschläge auf die Live-Website übernommen.`
+          : `Added ${res.addedCount} reviewed suggestions to the live website.`,
+      );
+    } catch (err) {
+      notifyErr(err);
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleApplySuggestedEdit = async (
+    cardId: string,
+    language: 'de' | 'en',
+    newText: string,
+    editId: string,
+  ) => {
+    if (busyAction) return;
+    setBusyAction(true);
+    try {
+      await applyReviewEditSuggestion({ cardId, language, newText, editId });
+      await Promise.all([loadAdminData(), refreshCatalog()]);
+      notifyOk(
+        isDe
+          ? 'Formulierung übernommen und auf Live-Karte gespeichert.'
+          : 'Suggested wording applied to live deck.',
+      );
+    } catch (err) {
+      notifyErr(err);
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleDismissSuggestedEdit = async (editId: string) => {
+    if (busyAction) return;
+    setBusyAction(true);
+    try {
+      await dismissReviewEditSuggestion(editId);
+      await loadAdminData();
+    } catch (err) {
+      notifyErr(err);
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleCopyReviewUrl = async () => {
+    if (typeof window === 'undefined') return;
+    const url = `${window.location.origin}/review`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedReviewLink(true);
+      setTimeout(() => setCopiedReviewLink(false), 1800);
+    } catch {
+      notifyOk(url);
+    }
+  };
 
   const notifyOk = (msg: string) => {
     setErrorBanner('');
@@ -914,6 +1073,12 @@ export const AdminPage: React.FC = () => {
           [
             ['cards', isDe ? `Karten (${adminCards.length})` : `Cards (${adminCards.length})`],
             ['stacks', isDe ? `Stapel (${adminStacks.length})` : `Stacks (${adminStacks.length})`],
+            [
+              'review',
+              isDe
+                ? `Freunde-Bewertung (${reviewOverview.ratedSuggestions})`
+                : `Friend Review (${reviewOverview.ratedSuggestions})`,
+            ],
             ['insights', isDe ? `Auswertung (${ratings.length})` : `Insights (${ratings.length})`],
             ['inbox', isDe ? `Runden-Eingang (${pendingInbox.length})` : `Group Inbox (${pendingInbox.length})`],
             ['security', isDe ? 'Sicherheit & Export' : 'Security & Backup'],
@@ -1317,7 +1482,432 @@ export const AdminPage: React.FC = () => {
         </section>
       )}
 
-      {/* TAB 3: INSIGHTS & RATINGS */}
+      {/* TAB 3: FRIEND REVIEW & RECOMMENDATIONS */}
+      {tab === 'review' && (
+        <section className="space-y-5">
+          {/* Summary KPI Strip */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div
+              className="rounded-2xl p-4 space-y-1"
+              style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
+            >
+              <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                {isDe ? 'Teilnehmende Freunde' : 'Friends Reviewed'}
+              </div>
+              <div className="font-serif-card text-2xl tabular-nums">
+                {reviewSummary?.reviewerCount ?? 0}
+              </div>
+            </div>
+
+            <div
+              className="rounded-2xl p-4 space-y-1"
+              style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
+            >
+              <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                {isDe ? 'Bewertete Vorschläge' : 'Rated Suggestions'}
+              </div>
+              <div className="font-serif-card text-2xl tabular-nums">
+                {reviewOverview.ratedSuggestions}{' '}
+                <span className="text-xs font-sans" style={{ color: 'var(--ink-muted)' }}>
+                  / {reviewOverview.totalSuggestions}
+                </span>
+              </div>
+            </div>
+
+            <div
+              className="rounded-2xl p-4 space-y-1"
+              style={{ backgroundColor: 'var(--card)', border: '1px solid var(--gold-hairline)' }}
+            >
+              <div className="text-[11px]" style={{ color: 'var(--gold)' }}>
+                {isDe ? 'Empfohlen (1/3 – 2/3)' : 'Recommended (1/3 – 2/3)'}
+              </div>
+              <div className="font-serif-card text-2xl tabular-nums" style={{ color: 'var(--gold)' }}>
+                {recommendedReviewIds.size}
+              </div>
+            </div>
+
+            <div
+              className="rounded-2xl p-4 space-y-1"
+              style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
+            >
+              <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                {isDe ? 'Offene Textvorschläge' : 'Pending Wording Edits'}
+              </div>
+              <div className="font-serif-card text-2xl tabular-nums">
+                {reviewOverview.pendingEdits}
+              </div>
+            </div>
+          </div>
+
+          {/* Share Link + Reviewer Activity */}
+          <div
+            className="rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+            style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
+          >
+            <div className="space-y-1 min-w-0">
+              <div className="text-xs font-medium">
+                {isDe ? 'Link für Freunde zum Bewerten' : 'Shareable Friend Review Link'}
+              </div>
+              <div className="text-xs truncate" style={{ color: 'var(--ink-muted)' }}>
+                {typeof window !== 'undefined' ? `${window.location.origin}/review` : '/review'}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleCopyReviewUrl}
+                className="px-4 py-1.5 rounded-full text-xs font-medium cursor-pointer"
+                style={{ backgroundColor: 'var(--elevated)', color: 'var(--ink)' }}
+              >
+                {copiedReviewLink ? (isDe ? 'Kopiert!' : 'Copied!') : isDe ? 'Link kopieren' : 'Copy Link'}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/review')}
+                className="px-4 py-1.5 rounded-full text-xs font-medium cursor-pointer"
+                style={{ backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}
+              >
+                {isDe ? '/review öffnen' : 'Open /review'}
+              </button>
+            </div>
+          </div>
+
+          {/* Controls: Recommendation Band + Source + Category + Bulk Promote */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <div
+                className="inline-flex p-0.5 rounded-full text-xs"
+                style={{ backgroundColor: 'var(--subtle)', border: '1px solid var(--border)' }}
+              >
+                {(
+                  [
+                    ['suggestions', isDe ? 'Neue Vorschläge' : 'New Suggestions'],
+                    ['live', isDe ? 'Live-Karten & Edits' : 'Live Cards & Edits'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setReviewSource(key)}
+                    className="px-3.5 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
+                    style={{
+                      backgroundColor: reviewSource === key ? 'var(--elevated)' : 'transparent',
+                      color: reviewSource === key ? 'var(--ink)' : 'var(--ink-muted)',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <select
+                value={reviewCategory}
+                onChange={(e) => setReviewCategory(e.target.value)}
+                aria-label="Filter review category"
+                className="rounded-full px-3.5 py-2 text-xs"
+                style={{
+                  backgroundColor: 'var(--subtle)',
+                  color: 'var(--ink)',
+                  border: '1px solid var(--border)',
+                }}
+              >
+                <option value="all">{isDe ? 'Alle Kategorien' : 'All categories'}</option>
+                {adminStacks.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {isDe ? s.nameDe : s.nameEn}
+                  </option>
+                ))}
+                <option value="__wildcards__">
+                  {isDe ? 'Impulse / Wildcards' : 'Moments / Wildcards'}
+                </option>
+              </select>
+
+              {reviewSource === 'suggestions' && (
+                <div
+                  className="inline-flex flex-wrap p-0.5 rounded-full text-[11px]"
+                  style={{ backgroundColor: 'var(--subtle)', border: '1px solid var(--border)' }}
+                >
+                  {(
+                    [
+                      ['auto', isDe ? 'Auto (33–67%)' : 'Smart Auto (33–67%)'],
+                      ['top33', 'Top 33%'],
+                      ['top50', 'Top 50%'],
+                      ['top67', 'Top 67%'],
+                    ] as [RecommendationPreset, string][]
+                  ).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setReviewPreset(key)}
+                      className="px-2.5 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
+                      style={{
+                        backgroundColor:
+                          reviewPreset === key ? 'var(--gold-soft)' : 'transparent',
+                        color: reviewPreset === key ? 'var(--gold)' : 'var(--ink-muted)',
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {reviewSource === 'suggestions' && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedReviewIds(new Set(recommendedReviewIds))}
+                  className="px-3 py-1.5 rounded-full text-xs cursor-pointer"
+                  style={{ color: 'var(--ink-muted)' }}
+                >
+                  {isDe ? 'Empfehlung wählen' : 'Reset to Recommended'}
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedVisibleReviewIds.length === 0 || busyAction}
+                  onClick={() => handlePromoteReviewIds(selectedVisibleReviewIds)}
+                  className="px-4 py-2 rounded-full text-xs font-medium cursor-pointer disabled:opacity-45"
+                  style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
+                >
+                  {isDe
+                    ? `${selectedVisibleReviewIds.length} auf Website übernehmen`
+                    : `Add ${selectedVisibleReviewIds.length} Selected to Live`}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Pending Suggested Wording Edits Banner */}
+          {visiblePendingEdits.length > 0 && (
+            <div
+              className="rounded-2xl p-4 space-y-3"
+              style={{
+                backgroundColor: 'var(--card)',
+                border: '1px solid var(--gold-hairline)',
+              }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-serif-card text-base font-medium m-0" style={{ color: 'var(--gold)' }}>
+                  {isDe
+                    ? `Vorgeschlagene Formulierungsänderungen (${visiblePendingEdits.length})`
+                    : `Suggested Wording Changes (${visiblePendingEdits.length})`}
+                </h3>
+              </div>
+              <div className="space-y-2.5">
+                {visiblePendingEdits.map(({ stat, edit }) => {
+                  const originalText = edit.language === 'de' ? stat.card.de : stat.card.en;
+                  return (
+                    <div
+                      key={edit.id}
+                      className="rounded-xl p-3 space-y-2"
+                      style={{ backgroundColor: 'var(--subtle)', border: '1px solid var(--border)' }}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                        <span style={{ color: 'var(--ink-muted)' }}>
+                          {stat.cardId} · {edit.language.toUpperCase()} ·{' '}
+                          {edit.reviewerName || 'Friend'}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={busyAction}
+                            onClick={() =>
+                              handleApplySuggestedEdit(
+                                stat.cardId,
+                                edit.language,
+                                edit.suggestedText,
+                                edit.id,
+                              )
+                            }
+                            className="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer"
+                            style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
+                          >
+                            {stat.source === 'live'
+                              ? isDe
+                                ? 'Live-Text ersetzen'
+                                : 'Apply to Live Card'
+                              : isDe
+                                ? 'Mit Text übernehmen'
+                                : 'Use wording & Add to Live'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busyAction}
+                            onClick={() => handleDismissSuggestedEdit(edit.id)}
+                            className="px-2.5 py-1 rounded-full text-[11px] cursor-pointer"
+                            style={{ color: 'var(--ink-muted)' }}
+                          >
+                            {isDe ? 'Verwerfen' : 'Dismiss'}
+                          </button>
+                        </div>
+                      </div>
+                      <div className="text-xs line-through opacity-70" style={{ color: 'var(--ink-muted)' }}>
+                        {originalText}
+                      </div>
+                      <div className="text-xs font-medium" style={{ color: 'var(--ink)' }}>
+                        {edit.suggestedText}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Ranked Cards List */}
+          <div className="space-y-2.5">
+            {filteredReviewStats.map((stat) => {
+              const stackMeta = getStackMetaSafe(stackMap, stat.card.stackId);
+              const isRec = recommendedReviewIds.has(stat.cardId);
+              const isSelected = selectedReviewIds.has(stat.cardId);
+              const scoreLabel =
+                stat.weightedScore > 0 ? `+${stat.weightedScore}` : String(stat.weightedScore);
+
+              return (
+                <div
+                  key={stat.cardId}
+                  className="rounded-2xl p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3"
+                  style={{
+                    backgroundColor: 'var(--card)',
+                    border:
+                      reviewSource === 'suggestions' && !stat.promoted && isRec
+                        ? '1px solid var(--gold-border)'
+                        : '1px solid var(--border)',
+                  }}
+                >
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    {reviewSource === 'suggestions' && !stat.promoted && (
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => handleToggleSelectReviewCard(stat.cardId)}
+                        aria-label={`Select ${stat.cardId}`}
+                        className="mt-1 shrink-0 cursor-pointer"
+                      />
+                    )}
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                        {reviewSource === 'suggestions' && stat.promoted && (
+                          <span
+                            className="px-2.5 py-0.5 rounded-full font-medium"
+                            style={{
+                              backgroundColor: 'var(--accent-soft)',
+                              color: 'var(--accent)',
+                            }}
+                          >
+                            {isDe ? 'Auf Website live' : 'Already Live'}
+                          </span>
+                        )}
+                        {reviewSource === 'suggestions' && !stat.promoted && isRec && (
+                          <span
+                            className="px-2.5 py-0.5 rounded-full font-medium"
+                            style={{ backgroundColor: 'var(--gold-soft)', color: 'var(--gold)' }}
+                          >
+                            {isDe ? 'Top-Auswahl' : 'Recommended'}
+                          </span>
+                        )}
+                        <span
+                          className="px-2 py-0.5 rounded-full"
+                          style={{ backgroundColor: 'var(--subtle)', color: 'var(--ink-muted)' }}
+                        >
+                          {stat.card.kind === 'wildcard'
+                            ? isDe
+                              ? 'Impuls / Wildcard'
+                              : 'Wildcard'
+                            : isDe
+                              ? stackMeta.nameDe
+                              : stackMeta.nameEn}
+                        </span>
+                        {stat.card.author && (
+                          <span style={{ color: 'var(--ink)' }}>{stat.card.author}</span>
+                        )}
+                        <span style={{ color: 'var(--ink-soft)' }}>· {stat.cardId}</span>
+                      </div>
+
+                      <p className="text-sm m-0" style={{ color: 'var(--ink)' }}>
+                        {isDe ? stat.card.de : stat.card.en}
+                      </p>
+                      <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
+                        {isDe ? stat.card.en : stat.card.de}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {stat.voteCount > 0 ? (
+                      <div className="flex flex-col sm:items-end gap-0.5">
+                        <span
+                          className="px-2.5 py-1 rounded-full text-[11px] font-medium tabular-nums"
+                          style={{
+                            backgroundColor:
+                              stat.weightedScore > 0
+                                ? 'var(--accent-soft)'
+                                : stat.weightedScore < 0
+                                  ? 'var(--danger-soft)'
+                                  : 'var(--subtle)',
+                            color:
+                              stat.weightedScore > 0
+                                ? 'var(--accent)'
+                                : stat.weightedScore < 0
+                                  ? 'var(--danger)'
+                                  : 'var(--ink-muted)',
+                          }}
+                        >
+                          {scoreLabel} · avg {stat.averageScore >= 0 ? '+' : ''}
+                          {stat.averageScore.toFixed(1)} ({stat.voteCount})
+                        </span>
+                        <span className="text-[10px] tabular-nums" style={{ color: 'var(--ink-muted)' }}>
+                          ++ {stat.up2} · + {stat.up1} · - {stat.down1} · -- {stat.down2}
+                        </span>
+                      </div>
+                    ) : (
+                      <span
+                        className="px-2.5 py-1 rounded-full text-[11px]"
+                        style={{ backgroundColor: 'var(--subtle)', color: 'var(--ink-soft)' }}
+                      >
+                        {isDe ? 'Keine Stimmen' : 'Unrated'}
+                      </span>
+                    )}
+
+                    {reviewSource === 'suggestions' && !stat.promoted && (
+                      <button
+                        type="button"
+                        disabled={busyAction}
+                        onClick={() => handlePromoteReviewIds([stat.cardId])}
+                        className="px-3 py-1.5 rounded-full text-xs font-medium cursor-pointer disabled:opacity-50"
+                        style={{ backgroundColor: 'var(--elevated)', color: 'var(--ink)' }}
+                      >
+                        {isDe ? '+ Aufnehmen' : '+ Add to Live'}
+                      </button>
+                    )}
+
+                    {reviewSource === 'live' && (
+                      <button
+                        type="button"
+                        disabled={busyAction}
+                        onClick={() => handleArchiveToggle(stat.card)}
+                        className="px-3 py-1.5 rounded-full text-xs font-medium cursor-pointer"
+                        style={{ color: 'var(--ink-muted)' }}
+                      >
+                        {stat.card.archived
+                          ? isDe
+                            ? 'Aktivieren'
+                            : 'Restore'
+                          : isDe
+                            ? 'Archivieren'
+                            : 'Archive'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* TAB 4: INSIGHTS & RATINGS */}
       {tab === 'insights' && (
         <section className="space-y-6">
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">

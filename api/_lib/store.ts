@@ -1,4 +1,4 @@
-import { BlobNotFoundError, get, put } from '@vercel/blob';
+import { BlobNotFoundError, get, list, put } from '@vercel/blob';
 import { CURATED_QUESTIONS } from '../../src/data/questions.js';
 import { CURATED_QUOTES } from '../../src/data/quotes.js';
 import { STACKS, STACK_ICON_IDS } from '../../src/data/stacks.js';
@@ -8,6 +8,7 @@ import type {
   CardRating,
   GroupRoom,
   GroupSubmission,
+  ReviewerRecord,
   StackIconId,
   StackMeta,
 } from '../../src/types/deck';
@@ -17,6 +18,17 @@ export const STACKS_PATH = 'resonance/stacks.json';
 export const CARDS_PATH = 'resonance/cards.json';
 export const RATINGS_PATH = 'resonance/ratings.json';
 export const INBOX_PATH = 'resonance/submissions-inbox.json';
+export const REVIEW_PREFIX = 'resonance/reviews/';
+export const REVIEW_STATE_PATH = 'resonance/review-state.json';
+
+export function reviewerBlobPath(reviewerId: string): string {
+  return `${REVIEW_PREFIX}${reviewerId}.json`;
+}
+
+export interface ReviewStateRecord {
+  promotedIds: string[];
+  dismissedEditIds: string[];
+}
 
 export function roomBlobPath(code: string): string {
   return `resonance/rooms/${code}.json`;
@@ -94,6 +106,44 @@ export async function getRatings(): Promise<CardRating[]> {
 export async function getInboxSubmissions(): Promise<GroupSubmission[]> {
   const existing = await readJsonBlob<GroupSubmission[]>(INBOX_PATH);
   return Array.isArray(existing) ? existing : [];
+}
+
+export async function getReviewState(): Promise<ReviewStateRecord> {
+  const existing = await readJsonBlob<ReviewStateRecord>(REVIEW_STATE_PATH);
+  return {
+    promotedIds: Array.isArray(existing?.promotedIds) ? existing.promotedIds : [],
+    dismissedEditIds: Array.isArray(existing?.dismissedEditIds) ? existing.dismissedEditIds : [],
+  };
+}
+
+export async function listAllReviewerRecords(): Promise<ReviewerRecord[]> {
+  const pathnames: string[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const page = await list({ prefix: REVIEW_PREFIX, cursor, limit: 1000 });
+    for (const blob of page.blobs) {
+      if (blob.pathname.endsWith('.json')) {
+        pathnames.push(blob.pathname);
+      }
+    }
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+
+  const records: ReviewerRecord[] = [];
+  const batchSize = 12;
+  for (let i = 0; i < pathnames.length; i += batchSize) {
+    const chunk = pathnames.slice(i, i + batchSize);
+    const loaded = await Promise.all(
+      chunk.map((pathname) => readJsonBlob<ReviewerRecord>(pathname)),
+    );
+    for (const item of loaded) {
+      if (item && typeof item.reviewerId === 'string') {
+        records.push(item);
+      }
+    }
+  }
+  return records;
 }
 
 export function sanitizeHttpUrl(url: unknown): string | undefined {

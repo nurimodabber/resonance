@@ -10,6 +10,7 @@ import { AdminPage } from './pages/AdminPage';
 import { HomePage } from './pages/HomePage';
 import { JoinRoomPage } from './pages/JoinRoomPage';
 import { PlayPage } from './pages/PlayPage';
+import { ReviewPage } from './pages/ReviewPage';
 
 const AppRouter: React.FC = () => {
   const { route, qrModalOpen, favoritesOpen, introOpen } = useResonance();
@@ -20,6 +21,8 @@ const AppRouter: React.FC = () => {
   } else if (route.startsWith('/join/')) {
     const code = route.replace('/join/', '').split('/')[0] || '';
     page = <JoinRoomPage roomCode={code} />;
+  } else if (route === '/review' || route.startsWith('/review/')) {
+    page = <ReviewPage />;
   } else if (route === '/admin') {
     page = <AdminPage />;
   }
