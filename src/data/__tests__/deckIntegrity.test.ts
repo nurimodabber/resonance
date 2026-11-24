@@ -169,15 +169,27 @@ describe('Resonance Curated Deck Integrity', () => {
 describe('Deck Engine & QR Mixing', () => {
   const catalog = [...CURATED_QUESTIONS, ...CURATED_QUOTES];
 
-  it('builds a no-repeat Guided Journey from Warm-up outward inward and weaves wildcards naturally', () => {
-    const deck = buildSessionDeck(catalog, { type: 'journey' }, () => 0.42);
-    const ids = deck.map((c) => c.id);
-    expect(new Set(ids).size).toBe(ids.length);
+  it('builds a no-repeat Progressively Deeper session with healthy ring pacing and wildcards', () => {
+    const defaultDeck = buildSessionDeck(catalog, { type: 'journey' }, () => 0.42);
+    const defaultIds = defaultDeck.map((c) => c.id);
+    expect(new Set(defaultIds).size).toBe(defaultIds.length);
 
-    // First 6 cards come from Warm-up
-    expect(deck.slice(0, 6).every((c) => c.stackId === 'warmup')).toBe(true);
-    // Contains at least 1 naturally interleaved wildcard
-    expect(deck.some((c) => c.kind === 'wildcard')).toBe(true);
+    // Default (~25 questions + natural wildcards): 5 warm-up, 7 reflection, 13 balanced deep cards
+    expect(defaultDeck.slice(0, 5).every((c) => c.stackId === 'warmup')).toBe(true);
+    expect(defaultDeck.filter((c) => c.kind === 'question')).toHaveLength(25);
+    expect(defaultDeck.some((c) => c.kind === 'wildcard')).toBe(true);
+
+    const shortDeck = buildSessionDeck(catalog, { type: 'journey', length: 15 }, () => 0.42);
+    expect(shortDeck.slice(0, 3).every((c) => c.stackId === 'warmup')).toBe(true);
+    expect(shortDeck.filter((c) => c.kind === 'question')).toHaveLength(15);
+
+    const mediumLongDeck = buildSessionDeck(catalog, { type: 'journey', length: 40 }, () => 0.42);
+    expect(mediumLongDeck.slice(0, 8).every((c) => c.stackId === 'warmup')).toBe(true);
+    expect(mediumLongDeck.filter((c) => c.kind === 'question')).toHaveLength(40);
+
+    const allDeck = buildSessionDeck(catalog, { type: 'journey', length: 'all' }, () => 0.42);
+    const totalQuestions = CURATED_QUESTIONS.filter((c) => c.kind === 'question').length;
+    expect(allDeck.filter((c) => c.kind === 'question')).toHaveLength(totalQuestions);
   });
 
   it('filters Quotes by subdeck and Ruhi Book 1 chapter cleanly', () => {

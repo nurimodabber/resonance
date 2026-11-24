@@ -25,10 +25,10 @@ describe('deckEngine with dynamic stacks', () => {
     en: 'What were you quietly grateful for today?',
   };
 
-  it('includes active custom stacks in Guided Journey phase 3', () => {
+  it('includes active custom stacks even in default (~25) Progressively Deeper sampling', () => {
     const deck = buildSessionDeck(
       [...CURATED_QUESTIONS, customCard],
-      { type: 'journey' },
+      { type: 'journey', length: 25 },
       () => 0.42,
       [...STACKS, customStack],
     );

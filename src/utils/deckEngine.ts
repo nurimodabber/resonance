@@ -1,5 +1,5 @@
 import { STACKS } from '../data/stacks';
-import type { CardItem, GroupSubmission, PlayMode, StackMeta } from '../types/deck';
+import type { CardItem, GroupSubmission, JourneyLength, PlayMode, StackMeta } from '../types/deck';
 
 export function shuffleCards<T>(items: T[], rng: () => number = Math.random): T[] {
   const arr = [...items];
@@ -10,10 +10,16 @@ export function shuffleCards<T>(items: T[], rng: () => number = Math.random): T[
   return arr;
 }
 
+const JOURNEY_QUOTAS: Record<Exclude<JourneyLength, 'all'>, { p1: number; p2: number; p3: number }> = {
+  15: { p1: 3, p2: 4, p3: 8 },
+  25: { p1: 5, p2: 7, p3: 13 },
+  40: { p1: 8, p2: 11, p3: 21 },
+};
+
 /**
  * Builds the active deck queue from available cards + play mode.
- * - Guided Journey moves gently from outer ring (Warm-up) -> Reflection -> Deep core stacks (including active custom stacks).
- * - Standard stack mode shuffles chosen stacks cleanly without repeats.
+ * - Progressively Deeper moves gently from outer ring (Warm-up) -> Reflection -> balanced sampling across deeper stacks (including active custom stacks), scaled to the chosen approximate session length.
+ * - Standard / Mix & Match stack mode shuffles chosen stacks cleanly without repeats.
  * - Natural wildcards are interleaved softly every ~8 cards when playing question decks.
  */
 export function buildSessionDeck(
@@ -33,26 +39,61 @@ export function buildSessionDeck(
   let ordered: CardItem[] = [];
 
   if (mode.type === 'journey') {
+    const length: JourneyLength = mode.length ?? 25;
     const journeyStacks = activeStacks
       .filter((s) => s.id !== 'quotes')
       .sort((a, b) => a.ring - b.ring);
     const phase1Ids = new Set(journeyStacks.filter((s) => s.ring <= 1).map((s) => s.id));
     const phase2Ids = new Set(journeyStacks.filter((s) => s.ring === 2).map((s) => s.id));
-    const phase3Ids = new Set(journeyStacks.filter((s) => s.ring >= 3).map((s) => s.id));
+    const phase3Stacks = journeyStacks.filter((s) => s.ring >= 3);
 
-    const phase1 = shuffleCards(
+    const phase1Pool = shuffleCards(
       active.filter((c) => c.kind === 'question' && phase1Ids.has(c.stackId)),
       rng,
-    ).slice(0, 6);
-    const phase2 = shuffleCards(
+    );
+    const phase2Pool = shuffleCards(
       active.filter((c) => c.kind === 'question' && phase2Ids.has(c.stackId)),
       rng,
-    ).slice(0, 8);
-    const phase3 = shuffleCards(
-      active.filter((c) => c.kind === 'question' && phase3Ids.has(c.stackId)),
-      rng,
     );
-    ordered = [...phase1, ...phase2, ...phase3];
+    const phase3Buckets = phase3Stacks
+      .map((s) =>
+        shuffleCards(
+          active.filter((c) => c.kind === 'question' && c.stackId === s.id),
+          rng,
+        ),
+      )
+      .filter((b) => b.length > 0);
+
+    if (length === 'all') {
+      const phase3 = shuffleCards(phase3Buckets.flat(), rng);
+      ordered = [...phase1Pool, ...phase2Pool, ...phase3];
+    } else {
+      const quota = JOURNEY_QUOTAS[length] ?? JOURNEY_QUOTAS[25];
+      const phase1 = phase1Pool.slice(0, quota.p1);
+      const phase2 = phase2Pool.slice(0, quota.p2);
+      const shortfall =
+        Math.max(0, quota.p1 - phase1.length) + Math.max(0, quota.p2 - phase2.length);
+      const phase3Target = quota.p3 + shortfall;
+
+      const orderedBuckets = shuffleCards(phase3Buckets, rng);
+      const cursors = orderedBuckets.map(() => 0);
+      const pickedPhase3: CardItem[] = [];
+
+      while (pickedPhase3.length < phase3Target) {
+        let madeProgress = false;
+        for (let b = 0; b < orderedBuckets.length && pickedPhase3.length < phase3Target; b++) {
+          if (cursors[b] < orderedBuckets[b].length) {
+            pickedPhase3.push(orderedBuckets[b][cursors[b]]);
+            cursors[b] += 1;
+            madeProgress = true;
+          }
+        }
+        if (!madeProgress) break;
+      }
+
+      const phase3 = shuffleCards(pickedPhase3, rng);
+      ordered = [...phase1, ...phase2, ...phase3];
+    }
   } else {
     const selectedIds = new Set(mode.stackIds);
     const pool = active.filter((c) => {

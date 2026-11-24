@@ -106,7 +106,7 @@ export const ResonanceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
 
   const [route, setRoute] = useState<string>(getRelativeRoute);
-  const [playMode, setPlayMode] = useState<PlayMode>({ type: 'journey' });
+  const [playMode, setPlayMode] = useState<PlayMode>({ type: 'journey', length: 25 });
   const [focusCardId, setFocusCardId] = useState<string | null>(null);
 
   const [activeRoom, setActiveRoom] = useState<GroupRoom | null>(null);

@@ -1,16 +1,18 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CheckIcon,
   ChevronRightIcon,
+  CloseIcon,
   ConcentricLogo,
   EmbossedNonagonPaper,
   NonagonFiligree,
   QrIcon,
   StackArtwork,
+  StacksIcon,
 } from '../components/Icons';
 import { useResonance } from '../context/ResonanceContext';
-import type { StackId } from '../types/deck';
+import type { JourneyLength, QuoteSubdeck, StackId } from '../types/deck';
 
 const STACK_SPRING = {
   type: 'spring' as const,
@@ -70,6 +72,18 @@ const frontCardVariants = {
 export const HomePage: React.FC = () => {
   const { lang, stacks, cards, startPlay, setQrModalOpen } = useResonance();
   const [selectedStacks, setSelectedStacks] = useState<StackId[]>([]);
+  const [journeyLength, setJourneyLength] = useState<JourneyLength>(25);
+  const [mixModalOpen, setMixModalOpen] = useState(false);
+  const [mixQuoteSubdeck, setMixQuoteSubdeck] = useState<QuoteSubdeck | 'all'>('all');
+
+  useEffect(() => {
+    if (!mixModalOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMixModalOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [mixModalOpen]);
 
   const visibleStacks = useMemo(
     () => stacks.filter((s) => !s.archived).slice().sort((a, b) => a.ring - b.ring),
@@ -89,8 +103,25 @@ export const HomePage: React.FC = () => {
     return counts;
   }, [visibleStacks, cards]);
 
-  const toggleSelect = (id: StackId, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const mixCardCount = useMemo(() => {
+    if (selectedStacks.length === 0) return 0;
+    const picked = new Set(selectedStacks);
+    return cards.filter((c) => {
+      if (c.archived || c.kind === 'wildcard') return false;
+      if (!picked.has(c.stackId)) return false;
+      if (
+        c.stackId === 'quotes' &&
+        mixQuoteSubdeck !== 'all' &&
+        c.quoteSubdeck !== mixQuoteSubdeck
+      ) {
+        return false;
+      }
+      return true;
+    }).length;
+  }, [cards, selectedStacks, mixQuoteSubdeck]);
+
+  const toggleSelect = (id: StackId, e?: React.MouseEvent) => {
+    e?.stopPropagation();
     setSelectedStacks((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
     );
@@ -113,15 +144,23 @@ export const HomePage: React.FC = () => {
 
   const handleStartMix = () => {
     if (selectedStacks.length === 0) return;
+    setMixModalOpen(false);
     startPlay({
       type: 'stacks',
       stackIds: selectedStacks,
-      quoteSubdeck: selectedStacks.includes('quotes') ? 'all' : undefined,
+      quoteSubdeck: selectedStacks.includes('quotes') ? mixQuoteSubdeck : undefined,
       ruhiChapter: 'all',
     });
   };
 
   const isDe = lang === 'de';
+
+  const lengthOptions: { value: JourneyLength; label: string }[] = [
+    { value: 15, label: '~15' },
+    { value: 25, label: '~25' },
+    { value: 40, label: '~40' },
+    { value: 'all', label: isDe ? 'Alle' : 'All' },
+  ];
 
   return (
     <main
@@ -129,67 +168,182 @@ export const HomePage: React.FC = () => {
         visibleStacks.length <= 6 ? 'md:h-[calc(100dvh-60px)]' : 'md:min-h-[calc(100dvh-60px)]'
       } md:min-h-[600px] md:py-4 lg:py-5 md:pb-5 md:flex md:flex-col md:gap-4 lg:gap-5 space-y-6 md:space-y-0`}
     >
-      {/* Guided Journey Feature Card (Double-Bezel + Architectural 9-Gon Filigree) */}
+      {/* Two Primary Modes: Progressively Deeper + Mix & Match */}
       <motion.section
         initial={{ opacity: 0, y: 12, scale: 0.985 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={ENTRANCE_SPRING}
-        className="shrink-0"
+        className="shrink-0 grid grid-cols-1 md:grid-cols-2 gap-3.5 lg:gap-4"
       >
+        {/* Mode 1: Progressively Deeper */}
         <motion.div
           whileHover={{ y: -3 }}
           whileTap={{ scale: 0.992 }}
           transition={STACK_SPRING}
-          className="noble-bezel noble-bezel-hover p-1.5 rounded-[26px] cursor-pointer"
-          onClick={() => startPlay({ type: 'journey' })}
+          className="noble-bezel noble-bezel-hover p-1.5 rounded-[26px] cursor-pointer flex"
+          onClick={() => startPlay({ type: 'journey', length: journeyLength })}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
+            if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
               e.preventDefault();
-              startPlay({ type: 'journey' });
+              startPlay({ type: 'journey', length: journeyLength });
             }
           }}
         >
-          <div
-            className="noble-card relative overflow-hidden rounded-[20px] px-5 py-4 sm:px-7 sm:py-4.5 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-          >
-            {/* Architectural 9-Gon Concentric Watermark behind the inset hairline outline */}
+          <div className="noble-card relative overflow-hidden rounded-[20px] px-4 py-3.5 sm:px-5 sm:py-4 w-full flex flex-col justify-between gap-3">
             <NonagonFiligree
               showCore
-              className="pointer-events-none absolute -right-10 -top-14 z-0 w-52 h-52 opacity-[0.09]"
+              className="pointer-events-none absolute -right-10 -top-14 z-0 w-44 h-44 opacity-[0.09]"
             />
-            {/* 02 Inset Letterpress Hairline Frame */}
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-2 sm:inset-2.5 z-[1] rounded-[14px] border"
+              className="pointer-events-none absolute inset-2 z-[1] rounded-[14px] border"
               style={{ borderColor: 'var(--gold-hairline)' }}
             />
 
-            <div className="relative z-10 flex items-center gap-4 min-w-0">
-              <ConcentricLogo size={40} className="shrink-0 w-9 h-9 sm:w-10 sm:h-10" />
+            <div className="relative z-10 flex items-center gap-3.5 min-w-0">
+              <ConcentricLogo size={36} className="shrink-0 w-9 h-9" />
               <div className="min-w-0">
-                <h1 className="font-serif-card text-[clamp(1.22rem,1.9vw,1.65rem)] font-medium m-0 leading-tight text-balance">
-                  {isDe ? 'Abend-Reise' : 'Guided Journey'}
+                <h1 className="font-serif-card text-[clamp(1.12rem,1.6vw,1.42rem)] font-medium m-0 leading-tight text-balance">
+                  {isDe ? 'Schrittweise tiefer' : 'Progressively Deeper'}
                 </h1>
                 <p
-                  className="text-xs sm:text-[13px] lg:text-sm m-0 mt-1 truncate max-w-full"
+                  className="text-xs sm:text-[13px] m-0 mt-0.5 truncate max-w-full"
                   style={{ color: 'var(--ink-muted)' }}
                 >
                   {isDe
-                    ? 'Vom leichten Einstieg behutsam tiefer – für Abende, die im Gespräch wachsen.'
-                    : 'Moves gently from easy openers into questions you remember the next day.'}
+                    ? 'Vom leichten Einstieg in ausgewogene Tiefe.'
+                    : 'Easy openers to deeper prompts, sized for tonight.'}
                 </p>
               </div>
             </div>
 
-            <div className="relative z-10 flex items-center gap-2 self-start sm:self-center">
+            <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 pt-0.5">
+              <div
+                className="inline-flex items-center p-0.5 rounded-full text-[11px]"
+                style={{
+                  backgroundColor: 'var(--subtle)',
+                  border: '1px solid var(--border)',
+                }}
+                role="group"
+                aria-label={isDe ? 'Ungefähre Kartenanzahl' : 'Approximate card count'}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                {lengthOptions.map((opt) => {
+                  const active = journeyLength === opt.value;
+                  return (
+                    <button
+                      key={String(opt.value)}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setJourneyLength(opt.value);
+                      }}
+                      className="px-2 sm:px-2.5 py-1 rounded-full font-medium transition-colors cursor-pointer"
+                      style={{
+                        backgroundColor: active ? 'var(--gold-soft)' : 'transparent',
+                        color: active ? 'var(--gold)' : 'var(--ink-muted)',
+                        border: active
+                          ? '1px solid var(--gold-hairline)'
+                          : '1px solid transparent',
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               <span
-                className="px-5 sm:px-6 py-2.5 sm:py-3 rounded-full text-xs sm:text-sm font-medium inline-flex items-center gap-1.5"
+                className="px-4 py-2 rounded-full text-xs sm:text-[13px] font-medium inline-flex items-center gap-1.5 shrink-0"
                 style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
               >
                 <span>{isDe ? 'Beginnen' : 'Begin'}</span>
-                <ChevronRightIcon size={14} />
+                <ChevronRightIcon size={13} />
+              </span>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Mode 2: Mix & Match */}
+        <motion.div
+          whileHover={{ y: -3 }}
+          whileTap={{ scale: 0.992 }}
+          transition={STACK_SPRING}
+          className="noble-bezel noble-bezel-hover p-1.5 rounded-[26px] cursor-pointer flex"
+          onClick={() => setMixModalOpen(true)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+              e.preventDefault();
+              setMixModalOpen(true);
+            }
+          }}
+        >
+          <div className="noble-card relative overflow-hidden rounded-[20px] px-4 py-3.5 sm:px-5 sm:py-4 w-full flex flex-col justify-between gap-3">
+            <NonagonFiligree
+              rotationDeg={20}
+              className="pointer-events-none absolute -right-10 -top-14 z-0 w-44 h-44 opacity-[0.08]"
+            />
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-2 z-[1] rounded-[14px] border"
+              style={{ borderColor: 'var(--gold-hairline)' }}
+            />
+
+            <div className="relative z-10 flex items-center gap-3.5 min-w-0">
+              <div
+                className="w-9 h-9 rounded-xl shrink-0 flex items-center justify-center"
+                style={{
+                  backgroundColor: 'var(--gold-soft)',
+                  color: 'var(--gold)',
+                  border: '1px solid var(--gold-hairline)',
+                }}
+              >
+                <StacksIcon size={18} />
+              </div>
+              <div className="min-w-0">
+                <h2 className="font-serif-card text-[clamp(1.12rem,1.6vw,1.42rem)] font-medium m-0 leading-tight text-balance">
+                  Mix &amp; Match
+                </h2>
+                <p
+                  className="text-xs sm:text-[13px] m-0 mt-0.5 truncate max-w-full"
+                  style={{ color: 'var(--ink-muted)' }}
+                >
+                  {isDe
+                    ? 'Stelle deine eigene Stapel-Kombination zusammen.'
+                    : 'Choose the exact combination of stacks you want.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 pt-0.5">
+              <span className="text-[11px] font-medium" style={{ color: 'var(--ink-muted)' }}>
+                {selectedStacks.length > 0
+                  ? isDe
+                    ? `${selectedStacks.length} ausgewählt · ${mixCardCount} Karten`
+                    : `${selectedStacks.length} selected · ${mixCardCount} cards`
+                  : isDe
+                    ? 'Beliebige Stapel kombinieren'
+                    : 'Combine any stacks'}
+              </span>
+
+              <span
+                className="px-4 py-2 rounded-full text-xs sm:text-[13px] font-medium inline-flex items-center gap-1.5 shrink-0"
+                style={{
+                  backgroundColor: selectedStacks.length > 0 ? 'var(--accent)' : 'var(--elevated)',
+                  color: selectedStacks.length > 0 ? 'var(--accent-ink)' : 'var(--ink)',
+                  border:
+                    selectedStacks.length > 0
+                      ? '1px solid var(--accent)'
+                      : '1px solid var(--border-strong)',
+                }}
+              >
+                <span>{isDe ? 'Stapel wählen' : 'Choose stacks'}</span>
+                <ChevronRightIcon size={13} />
               </span>
             </div>
           </div>
@@ -203,7 +357,7 @@ export const HomePage: React.FC = () => {
       >
         <div className="flex items-center justify-between px-1 shrink-0">
           <h2 className="text-xs sm:text-sm font-medium m-0" style={{ color: 'var(--ink-muted)' }}>
-            {isDe ? 'Stapel wählen oder mehrere mischen' : 'Choose a stack or mix several'}
+            {isDe ? 'Oder direkt einen einzelnen Stapel öffnen' : 'Or jump straight into a single stack'}
           </h2>
           <motion.button
             type="button"
@@ -386,7 +540,7 @@ export const HomePage: React.FC = () => {
 
       {/* Floating Multi-Stack Mix Action Pill */}
       <AnimatePresence>
-        {selectedStacks.length > 0 && (
+        {!mixModalOpen && selectedStacks.length > 0 && (
           <motion.div
             key="mix-pill"
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
@@ -428,6 +582,238 @@ export const HomePage: React.FC = () => {
                 <ChevronRightIcon size={14} />
               </motion.button>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Mix & Match Stack Picker Modal */}
+      <AnimatePresence>
+        {mixModalOpen && (
+          <motion.div
+            key="mix-match-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={isDe ? 'Mix & Match Stapel auswählen' : 'Mix & Match stack picker'}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 backdrop-blur-sm"
+            style={{ backgroundColor: 'var(--scrim)' }}
+            onClick={() => setMixModalOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              transition={ENTRANCE_SPRING}
+              className="w-full max-w-2xl p-1.5 rounded-[30px]"
+              style={{
+                backgroundColor: 'var(--subtle)',
+                border: '1px solid var(--border-strong)',
+                boxShadow: 'var(--shadow-card)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="cardstock relative overflow-hidden rounded-[24px] p-5 sm:p-7 space-y-5 max-h-[86dvh] overflow-y-auto">
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-2.5 sm:inset-3 rounded-[16px]"
+                  style={{ border: '1px solid var(--gold-hairline)' }}
+                />
+
+                {/* Modal Header */}
+                <div className="relative z-10 flex items-start justify-between gap-4">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div
+                      className="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center"
+                      style={{
+                        backgroundColor: 'var(--gold-soft)',
+                        color: 'var(--gold)',
+                        border: '1px solid var(--gold-hairline)',
+                      }}
+                    >
+                      <StacksIcon size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <h2 className="font-serif-card text-xl sm:text-2xl font-medium m-0 leading-tight">
+                        Mix &amp; Match
+                      </h2>
+                      <p className="text-xs sm:text-sm m-0 mt-0.5" style={{ color: 'var(--ink-muted)' }}>
+                        {isDe
+                          ? 'Wähle die Stapel, die du miteinander mischen möchtest.'
+                          : 'Choose the stacks you want to blend together.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedStacks(visibleStacks.map((s) => s.id))}
+                      className="px-2.5 py-1 rounded-full text-[11px] font-medium hover:bg-[var(--elevated)] cursor-pointer"
+                      style={{ color: 'var(--accent)' }}
+                    >
+                      {isDe ? 'Alle' : 'All'}
+                    </button>
+                    {selectedStacks.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedStacks([])}
+                        className="px-2.5 py-1 rounded-full text-[11px] font-medium hover:bg-[var(--elevated)] cursor-pointer"
+                        style={{ color: 'var(--ink-muted)' }}
+                      >
+                        {isDe ? 'Leeren' : 'Clear'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setMixModalOpen(false)}
+                      aria-label={isDe ? 'Schließen' : 'Close'}
+                      className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-[var(--elevated)] cursor-pointer"
+                      style={{ color: 'var(--ink-muted)' }}
+                    >
+                      <CloseIcon size={16} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Stack Combination Grid */}
+                <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {visibleStacks.map((stack) => {
+                    const selected = selectedStacks.includes(stack.id);
+                    const count = stackCounts[stack.id] || 0;
+                    return (
+                      <button
+                        key={stack.id}
+                        type="button"
+                        onClick={(e) => toggleSelect(stack.id, e)}
+                        className="flex items-center justify-between gap-3 rounded-2xl p-3.5 text-left transition-all cursor-pointer"
+                        style={{
+                          backgroundColor: selected ? 'var(--card)' : 'var(--subtle)',
+                          border: `1px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
+                          boxShadow: selected ? '0 0 0 1px var(--accent)' : 'none',
+                        }}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div
+                            className="w-9 h-9 rounded-xl shrink-0 flex items-center justify-center"
+                            style={{
+                              backgroundColor: selected ? 'var(--accent-soft)' : 'var(--elevated)',
+                              color: selected ? 'var(--accent)' : 'var(--gold)',
+                            }}
+                          >
+                            <StackArtwork stackId={stack.id} iconId={stack.iconId} size={20} />
+                          </div>
+                          <div className="min-w-0">
+                            <div
+                              className="text-sm font-medium truncate"
+                              style={{ color: 'var(--ink)' }}
+                            >
+                              {isDe ? stack.nameDe : stack.nameEn}
+                            </div>
+                            <div
+                              className="text-[11px] truncate"
+                              style={{ color: 'var(--ink-muted)' }}
+                            >
+                              {isDe ? `${count} Karten` : `${count} cards`}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div
+                          className="w-6 h-6 rounded-full shrink-0 flex items-center justify-center"
+                          style={{
+                            backgroundColor: selected ? 'var(--accent)' : 'var(--elevated)',
+                            color: selected ? 'var(--accent-ink)' : 'var(--ink-muted)',
+                            border: `1px solid ${selected ? 'var(--accent)' : 'var(--border-strong)'}`,
+                          }}
+                        >
+                          {selected && <CheckIcon size={12} />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Optional Quotes Filter when Quotes stack is included */}
+                {selectedStacks.includes('quotes') && (
+                  <div
+                    className="relative z-10 flex flex-wrap items-center justify-between gap-2 rounded-2xl px-4 py-2.5 text-xs"
+                    style={{
+                      backgroundColor: 'var(--subtle)',
+                      border: '1px solid var(--border)',
+                    }}
+                  >
+                    <span className="font-medium" style={{ color: 'var(--ink-muted)' }}>
+                      {isDe ? 'Zitate-Auswahl im Mix:' : 'Quotes included in mix:'}
+                    </span>
+                    <div className="inline-flex flex-wrap items-center gap-1">
+                      {(
+                        [
+                          ['all', isDe ? 'Alle Zitate' : 'All quotes'],
+                          ['general', isDe ? 'Allgemein' : 'General'],
+                          ['ruhi', isDe ? 'Ruhi Buch 1' : 'Ruhi Book 1'],
+                        ] as const
+                      ).map(([sub, label]) => {
+                        const active = mixQuoteSubdeck === sub;
+                        return (
+                          <button
+                            key={sub}
+                            type="button"
+                            onClick={() => setMixQuoteSubdeck(sub)}
+                            className="px-2.5 py-1 rounded-full font-medium transition-colors cursor-pointer"
+                            style={{
+                              backgroundColor: active ? 'var(--gold-soft)' : 'transparent',
+                              color: active ? 'var(--gold)' : 'var(--ink-muted)',
+                              border: active
+                                ? '1px solid var(--gold-hairline)'
+                                : '1px solid transparent',
+                            }}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Modal Footer */}
+                <div className="relative z-10 flex flex-wrap items-center justify-between gap-3 pt-1">
+                  <span className="text-xs font-medium" style={{ color: 'var(--ink-muted)' }}>
+                    {selectedStacks.length === 0
+                      ? isDe
+                        ? 'Wähle mindestens 1 Stapel'
+                        : 'Select at least 1 stack'
+                      : isDe
+                        ? `${selectedStacks.length} Stapel · ${mixCardCount} Karten`
+                        : `${selectedStacks.length} ${selectedStacks.length === 1 ? 'stack' : 'stacks'} · ${mixCardCount} cards`}
+                  </span>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMixModalOpen(false)}
+                      className="px-4 py-2 rounded-full text-xs sm:text-sm font-medium hover:bg-[var(--elevated)] cursor-pointer"
+                      style={{ color: 'var(--ink-muted)' }}
+                    >
+                      {isDe ? 'Abbrechen' : 'Cancel'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={selectedStacks.length === 0}
+                      onClick={handleStartMix}
+                      className="px-5 py-2.5 rounded-full text-xs sm:text-sm font-medium inline-flex items-center gap-1.5 transition-opacity disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                      style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
+                    >
+                      <span>{isDe ? 'Mix starten' : 'Start Mix'}</span>
+                      <ChevronRightIcon size={14} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

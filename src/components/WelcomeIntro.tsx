@@ -25,7 +25,7 @@ export const WelcomeIntro: React.FC = () => {
         {
           icon: <StacksIcon size={17} />,
           title: 'Stapel wählen oder mischen',
-          body: 'Folge der Abend-Reise von leichten Fragen in die Tiefe oder stelle eigene Stapel zusammen.',
+          body: 'Wähle „Schrittweise tiefer“ für eine ausgewogene Frage-Kurve oder stelle mit „Mix & Match“ eigene Stapel zusammen.',
         },
         {
           icon: <ThumbUpIcon size={17} />,
@@ -42,7 +42,7 @@ export const WelcomeIntro: React.FC = () => {
         {
           icon: <StacksIcon size={17} />,
           title: 'Pick or mix stacks',
-          body: 'Follow the Guided Journey from easy openers to deeper prompts, or combine stacks of your own.',
+          body: 'Try Progressively Deeper for a balanced arc from warm-up to depth, or use Mix & Match to combine your own stacks.',
         },
         {
           icon: <ThumbUpIcon size={17} />,
@@ -58,7 +58,7 @@ export const WelcomeIntro: React.FC = () => {
 
   const handleStartJourney = () => {
     dismissIntro();
-    startPlay({ type: 'journey' });
+    startPlay({ type: 'journey', length: 25 });
   };
 
   return (
@@ -211,7 +211,7 @@ export const WelcomeIntro: React.FC = () => {
                 color: 'var(--accent-ink)',
               }}
             >
-              <span>{isDe ? 'Abend-Reise starten' : 'Start Guided Journey'}</span>
+              <span>{isDe ? 'Schrittweise tiefer starten' : 'Progressively Deeper'}</span>
               <ChevronRightIcon size={14} />
             </button>
           </div>
