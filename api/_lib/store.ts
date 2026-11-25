@@ -80,10 +80,49 @@ export async function writeJsonBlob(pathname: string, data: unknown): Promise<vo
   });
 }
 
+const LEGACY_STACK_RENAMES: Record<
+  string,
+  { oldDe: string; oldEn: string; nameDe: string; nameEn: string }
+> = {
+  reflection: {
+    oldDe: 'Reflexion & Lebensweg',
+    oldEn: 'Reflection & Path',
+    nameDe: 'Reflexion',
+    nameEn: 'Reflection',
+  },
+  friendship: {
+    oldDe: 'Tiefe Freundschaft & Verbindung',
+    oldEn: 'Deep Friendship & Connection',
+    nameDe: 'Verbindung',
+    nameEn: 'Connection',
+  },
+  spirituality: {
+    oldDe: 'Spiritualität & Sinn',
+    oldEn: 'Spirituality & Meaning',
+    nameDe: 'Spiritualität',
+    nameEn: 'Spirituality',
+  },
+};
+
 export async function getStacksOrSeed(): Promise<StackMeta[]> {
   const existing = await readJsonBlob<StackMeta[]>(STACKS_PATH);
   if (Array.isArray(existing) && existing.length > 0) {
-    return existing;
+    let changed = false;
+    const migrated = existing.map((s) => {
+      const rule = LEGACY_STACK_RENAMES[s.id];
+      if (!rule) return s;
+      const nextDe = s.nameDe === rule.oldDe ? rule.nameDe : s.nameDe;
+      const nextEn = s.nameEn === rule.oldEn ? rule.nameEn : s.nameEn;
+      if (nextDe !== s.nameDe || nextEn !== s.nameEn) {
+        changed = true;
+        return { ...s, nameDe: nextDe, nameEn: nextEn };
+      }
+      return s;
+    });
+    if (changed) {
+      await writeJsonBlob(STACKS_PATH, migrated);
+    }
+    return migrated;
   }
   await writeJsonBlob(STACKS_PATH, STACKS);
   return STACKS;
