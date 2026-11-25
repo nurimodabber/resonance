@@ -88,7 +88,7 @@ export interface GroupSubmission {
   createdAt: string;
 }
 
-export type JourneyLength = 15 | 25 | 40 | 'all';
+export type JourneyLength = number | 'all';
 
 export type PlayMode =
   | { type: 'journey'; length?: JourneyLength }

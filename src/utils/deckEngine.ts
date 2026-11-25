@@ -10,11 +10,13 @@ export function shuffleCards<T>(items: T[], rng: () => number = Math.random): T[
   return arr;
 }
 
-const JOURNEY_QUOTAS: Record<Exclude<JourneyLength, 'all'>, { p1: number; p2: number; p3: number }> = {
-  15: { p1: 3, p2: 4, p3: 8 },
-  25: { p1: 5, p2: 7, p3: 13 },
-  40: { p1: 8, p2: 11, p3: 21 },
-};
+function getJourneyQuota(length: number): { p1: number; p2: number; p3: number } {
+  const total = Math.max(6, Math.round(length));
+  const p1 = Math.max(2, Math.round(total * 0.2));
+  const p2 = Math.max(2, Math.round(total * 0.28));
+  const p3 = Math.max(2, total - p1 - p2);
+  return { p1, p2, p3 };
+}
 
 /**
  * Builds the active deck queue from available cards + play mode.
@@ -68,7 +70,7 @@ export function buildSessionDeck(
       const phase3 = shuffleCards(phase3Buckets.flat(), rng);
       ordered = [...phase1Pool, ...phase2Pool, ...phase3];
     } else {
-      const quota = JOURNEY_QUOTAS[length] ?? JOURNEY_QUOTAS[25];
+      const quota = getJourneyQuota(length);
       const phase1 = phase1Pool.slice(0, quota.p1);
       const phase2 = phase2Pool.slice(0, quota.p2);
       const shortfall =

@@ -351,3 +351,52 @@ select:focus-visible {
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* Precision Range Slider for Progressively Deeper */
+.resonance-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 9999px;
+  outline: none;
+  cursor: pointer;
+}
+
+.resonance-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: var(--gold);
+  border: 2.5px solid var(--card);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--gold-hairline);
+  cursor: grab;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.resonance-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+}
+
+.resonance-slider::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  transform: scale(1.06);
+  box-shadow: 0 0 0 4px var(--gold-soft), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.resonance-slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: var(--gold);
+  border: 2.5px solid var(--card);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--gold-hairline);
+  cursor: grab;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.resonance-slider::-moz-range-thumb:hover {
+  transform: scale(1.12);
+}

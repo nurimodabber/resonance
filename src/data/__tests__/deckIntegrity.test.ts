@@ -187,6 +187,14 @@ describe('Deck Engine & QR Mixing', () => {
     expect(mediumLongDeck.slice(0, 8).every((c) => c.stackId === 'warmup')).toBe(true);
     expect(mediumLongDeck.filter((c) => c.kind === 'question')).toHaveLength(40);
 
+    const step20Deck = buildSessionDeck(catalog, { type: 'journey', length: 20 }, () => 0.42);
+    expect(step20Deck.slice(0, 4).every((c) => c.stackId === 'warmup')).toBe(true);
+    expect(step20Deck.filter((c) => c.kind === 'question')).toHaveLength(20);
+
+    const step30Deck = buildSessionDeck(catalog, { type: 'journey', length: 30 }, () => 0.42);
+    expect(step30Deck.slice(0, 6).every((c) => c.stackId === 'warmup')).toBe(true);
+    expect(step30Deck.filter((c) => c.kind === 'question')).toHaveLength(30);
+
     const allDeck = buildSessionDeck(catalog, { type: 'journey', length: 'all' }, () => 0.42);
     const totalQuestions = CURATED_QUESTIONS.filter((c) => c.kind === 'question').length;
     expect(allDeck.filter((c) => c.kind === 'question')).toHaveLength(totalQuestions);

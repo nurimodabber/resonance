@@ -10,6 +10,7 @@ import {
   StackArtwork,
   StacksIcon,
 } from '../components/Icons';
+import { JourneyLengthSlider } from '../components/JourneyLengthSlider';
 import { useResonance } from '../context/ResonanceContext';
 import type { JourneyLength, QuoteSubdeck, StackId } from '../types/deck';
 
@@ -154,12 +155,16 @@ export const HomePage: React.FC = () => {
 
   const isDe = lang === 'de';
 
-  const lengthOptions: { value: JourneyLength; label: string }[] = [
-    { value: 15, label: '~15' },
-    { value: 25, label: '~25' },
-    { value: 40, label: '~40' },
-    { value: 'all', label: isDe ? 'Alle' : 'All' },
-  ];
+  const journeyTotalCount = useMemo(
+    () =>
+      cards.filter(
+        (c) =>
+          !c.archived &&
+          c.kind === 'question' &&
+          visibleStacks.some((s) => s.id === c.stackId && s.id !== 'quotes'),
+      ).length,
+    [cards, visibleStacks],
+  );
 
   return (
     <main
@@ -228,51 +233,20 @@ export const HomePage: React.FC = () => {
             </div>
 
             <div
-              className="relative z-10 flex items-center justify-between gap-2.5 pt-3 mt-1 border-t"
+              className="relative z-10 flex flex-col sm:flex-row sm:items-end justify-between gap-3 pt-3 mt-1 border-t"
               style={{ borderColor: 'var(--gold-hairline)' }}
             >
-              <div
-                className="inline-flex items-center p-1 rounded-full text-[11px]"
-                style={{ backgroundColor: 'var(--subtle)' }}
-                role="group"
-                aria-label={isDe ? 'Ungefähre Kartenanzahl' : 'Approximate card count'}
-                onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => e.stopPropagation()}
-              >
-                {lengthOptions.map((opt) => {
-                  const active = journeyLength === opt.value;
-                  return (
-                    <button
-                      key={String(opt.value)}
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setJourneyLength(opt.value);
-                      }}
-                      className="relative px-2.5 sm:px-3 py-1 rounded-full font-medium tabular-nums transition-colors cursor-pointer"
-                      style={{
-                        color: active ? 'var(--gold)' : 'var(--ink-muted)',
-                      }}
-                    >
-                      {active && (
-                        <motion.span
-                          layoutId="home-journey-length-pill"
-                          transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                          className="absolute inset-0 rounded-full"
-                          style={{
-                            backgroundColor: 'var(--elevated)',
-                            boxShadow: '0 1px 4px rgba(0, 0, 0, 0.22)',
-                          }}
-                        />
-                      )}
-                      <span className="relative z-10">{opt.label}</span>
-                    </button>
-                  );
-                })}
+              <div className="flex-1 min-w-0">
+                <JourneyLengthSlider
+                  value={journeyLength}
+                  onChange={setJourneyLength}
+                  totalAvailable={journeyTotalCount}
+                  lang={lang}
+                />
               </div>
 
               <span
-                className="min-h-[38px] px-4.5 sm:px-5 rounded-full text-xs sm:text-[13px] font-semibold inline-flex items-center gap-1.5 shrink-0"
+                className="min-h-[40px] sm:min-h-[42px] px-5 rounded-full text-xs sm:text-[13px] font-semibold inline-flex items-center justify-center gap-1.5 shrink-0 self-end sm:self-auto"
                 style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
               >
                 <span>{isDe ? 'Beginnen' : 'Begin'}</span>

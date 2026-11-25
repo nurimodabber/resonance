@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CardDeck, type CardTransitionMeta } from '../components/CardDeck';
 import { ChevronLeftIcon, EmbossedNonagonPaper } from '../components/Icons';
+import { JourneyLengthSlider } from '../components/JourneyLengthSlider';
 import { useResonance } from '../context/ResonanceContext';
 import { recordCardRating } from '../services/repository';
-import type { CardItem, JourneyLength, QuoteSubdeck, RuhiChapter } from '../types/deck';
+import type { CardItem, QuoteSubdeck, RuhiChapter } from '../types/deck';
 import { triggerHaptic } from '../utils/audio';
 import { buildSessionDeck, mixSubmissionsIntoQueue } from '../utils/deckEngine';
 
@@ -136,46 +137,14 @@ export const PlayPage: React.FC = () => {
           <span>{isDe ? 'Alle Stapel' : 'All stacks'}</span>
         </button>
 
-        {/* Progressively Deeper Length Switcher */}
+        {/* Progressively Deeper Length Slider */}
         {playMode.type === 'journey' && (
-          <div
-            className="inline-flex p-0.5 rounded-full text-xs"
-            style={{ backgroundColor: 'var(--subtle)', border: '1px solid var(--border)' }}
-            role="group"
-            aria-label={isDe ? 'Kartenanzahl' : 'Session length'}
-          >
-            {(
-              [
-                [15, '~15'],
-                [25, '~25'],
-                [40, '~40'],
-                ['all', isDe ? 'Alle' : 'All'],
-              ] as [JourneyLength, string][]
-            ).map(([len, label]) => {
-              const active = (playMode.length ?? 25) === len;
-              return (
-                <button
-                  key={String(len)}
-                  type="button"
-                  onClick={() => startPlay({ type: 'journey', length: len })}
-                  className="relative px-2.5 sm:px-3 py-1 rounded-full font-medium transition-colors cursor-pointer"
-                  style={{
-                    color: active ? 'var(--accent-ink)' : 'var(--ink-muted)',
-                  }}
-                >
-                  {active && (
-                    <motion.span
-                      layoutId="play-journey-length-pill"
-                      transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-                      className="absolute inset-0 rounded-full"
-                      style={{ backgroundColor: 'var(--accent)' }}
-                    />
-                  )}
-                  <span className="relative z-10">{label}</span>
-                </button>
-              );
-            })}
-          </div>
+          <JourneyLengthSlider
+            compact
+            value={playMode.length ?? 25}
+            onChange={(len) => startPlay({ type: 'journey', length: len })}
+            lang={lang}
+          />
         )}
 
         {/* Quotes Subfolder Switcher (only visible inside the Quotes stack) */}
