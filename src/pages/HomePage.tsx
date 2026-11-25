@@ -4,7 +4,6 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CloseIcon,
-  ConcentricLogo,
   EmbossedNonagonPaper,
   NonagonFiligree,
   QrIcon,
@@ -168,12 +167,12 @@ export const HomePage: React.FC = () => {
         visibleStacks.length <= 6 ? 'md:h-[calc(100dvh-60px)]' : 'md:min-h-[calc(100dvh-60px)]'
       } md:min-h-[600px] md:py-4 lg:py-5 md:pb-5 md:flex md:flex-col md:gap-4 lg:gap-5 space-y-6 md:space-y-0`}
     >
-      {/* Two Primary Modes: Progressively Deeper + Mix & Match */}
+      {/* Two Primary Modes: Progressively Deeper (Primary Hero) + Mix & Match (Companion) */}
       <motion.section
         initial={{ opacity: 0, y: 12, scale: 0.985 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={ENTRANCE_SPRING}
-        className="shrink-0 grid grid-cols-1 md:grid-cols-2 gap-3.5 lg:gap-4"
+        className="shrink-0 grid grid-cols-1 md:grid-cols-[1.35fr_1fr] gap-3 lg:gap-4"
       >
         {/* Mode 1: Progressively Deeper */}
         <motion.div
@@ -191,41 +190,50 @@ export const HomePage: React.FC = () => {
             }
           }}
         >
-          <div className="noble-card relative overflow-hidden rounded-[20px] px-4 py-3.5 sm:px-5 sm:py-4 w-full flex flex-col justify-between gap-3">
+          <div
+            className="noble-card relative overflow-hidden rounded-[20px] px-5 py-4 sm:px-6 sm:py-5 w-full flex flex-col justify-between gap-3.5"
+            style={{
+              backgroundImage:
+                'radial-gradient(circle at 92% 10%, var(--gold-soft) 0%, transparent 56%)',
+            }}
+          >
             <NonagonFiligree
               showCore
-              className="pointer-events-none absolute -right-10 -top-14 z-0 w-44 h-44 opacity-[0.09]"
+              className="pointer-events-none absolute -right-10 -top-14 z-0 w-44 h-44 opacity-[0.08]"
             />
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-2 z-[1] rounded-[14px] border"
+              className="pointer-events-none absolute inset-2.5 z-[1] rounded-[14px] border"
               style={{ borderColor: 'var(--gold-hairline)' }}
             />
 
-            <div className="relative z-10 flex items-center gap-3.5 min-w-0">
-              <ConcentricLogo size={36} className="shrink-0 w-9 h-9" />
-              <div className="min-w-0">
-                <h1 className="font-serif-card text-[clamp(1.12rem,1.6vw,1.42rem)] font-medium m-0 leading-tight text-balance">
-                  {isDe ? 'Schrittweise tiefer' : 'Progressively Deeper'}
-                </h1>
-                <p
-                  className="text-xs sm:text-[13px] m-0 mt-0.5 truncate max-w-full"
-                  style={{ color: 'var(--ink-muted)' }}
-                >
-                  {isDe
-                    ? 'Vom leichten Einstieg in ausgewogene Tiefe.'
-                    : 'Easy openers to deeper prompts, sized for tonight.'}
-                </p>
-              </div>
+            <div className="relative z-10 min-w-0 space-y-1">
+              <span
+                className="block text-[10px] font-medium uppercase tracking-[0.16em]"
+                style={{ color: 'var(--gold)' }}
+              >
+                {isDe ? 'Warm-up → Tiefe' : 'Warm-up → Depth'}
+              </span>
+              <h1 className="font-serif-card text-[1.32rem] sm:text-[1.5rem] font-medium tracking-[-0.015em] leading-[1.15] m-0 text-balance">
+                {isDe ? 'Schrittweise tiefer' : 'Progressively Deeper'}
+              </h1>
+              <p
+                className="text-xs sm:text-[13px] m-0 leading-snug truncate max-w-full"
+                style={{ color: 'var(--ink-muted)' }}
+              >
+                {isDe
+                  ? 'Vom leichten Einstieg in ausgewogene Tiefe.'
+                  : 'Easy openers to deeper prompts, sized for tonight.'}
+              </p>
             </div>
 
-            <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 pt-0.5">
+            <div
+              className="relative z-10 flex items-center justify-between gap-2.5 pt-3 mt-1 border-t"
+              style={{ borderColor: 'var(--gold-hairline)' }}
+            >
               <div
-                className="inline-flex items-center p-0.5 rounded-full text-[11px]"
-                style={{
-                  backgroundColor: 'var(--subtle)',
-                  border: '1px solid var(--border)',
-                }}
+                className="inline-flex items-center p-1 rounded-full text-[11px]"
+                style={{ backgroundColor: 'var(--subtle)' }}
                 role="group"
                 aria-label={isDe ? 'Ungefähre Kartenanzahl' : 'Approximate card count'}
                 onClick={(e) => e.stopPropagation()}
@@ -241,23 +249,30 @@ export const HomePage: React.FC = () => {
                         e.stopPropagation();
                         setJourneyLength(opt.value);
                       }}
-                      className="px-2 sm:px-2.5 py-1 rounded-full font-medium transition-colors cursor-pointer"
+                      className="relative px-2.5 sm:px-3 py-1 rounded-full font-medium tabular-nums transition-colors cursor-pointer"
                       style={{
-                        backgroundColor: active ? 'var(--gold-soft)' : 'transparent',
                         color: active ? 'var(--gold)' : 'var(--ink-muted)',
-                        border: active
-                          ? '1px solid var(--gold-hairline)'
-                          : '1px solid transparent',
                       }}
                     >
-                      {opt.label}
+                      {active && (
+                        <motion.span
+                          layoutId="home-journey-length-pill"
+                          transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                          className="absolute inset-0 rounded-full"
+                          style={{
+                            backgroundColor: 'var(--elevated)',
+                            boxShadow: '0 1px 4px rgba(0, 0, 0, 0.22)',
+                          }}
+                        />
+                      )}
+                      <span className="relative z-10">{opt.label}</span>
                     </button>
                   );
                 })}
               </div>
 
               <span
-                className="px-4 py-2 rounded-full text-xs sm:text-[13px] font-medium inline-flex items-center gap-1.5 shrink-0"
+                className="min-h-[38px] px-4.5 sm:px-5 rounded-full text-xs sm:text-[13px] font-semibold inline-flex items-center gap-1.5 shrink-0"
                 style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
               >
                 <span>{isDe ? 'Beginnen' : 'Begin'}</span>
@@ -267,12 +282,11 @@ export const HomePage: React.FC = () => {
           </div>
         </motion.div>
 
-        {/* Mode 2: Mix & Match */}
+        {/* Mode 2: Mix & Match Companion Card */}
         <motion.div
           whileHover={{ y: -3 }}
           whileTap={{ scale: 0.992 }}
           transition={STACK_SPRING}
-          className="noble-bezel noble-bezel-hover p-1.5 rounded-[26px] cursor-pointer flex"
           onClick={() => setMixModalOpen(true)}
           role="button"
           tabIndex={0}
@@ -282,70 +296,104 @@ export const HomePage: React.FC = () => {
               setMixModalOpen(true);
             }
           }}
+          className="relative overflow-hidden rounded-[24px] p-4 sm:px-6 sm:py-5 cursor-pointer flex items-center justify-between gap-3.5 md:flex-col md:items-stretch transition-colors"
+          style={{
+            backgroundColor: 'var(--card)',
+            border: `1px solid ${
+              selectedStacks.length > 0 ? 'var(--accent-border)' : 'var(--border-strong)'
+            }`,
+            boxShadow: 'var(--shadow-stack)',
+            backgroundImage:
+              'radial-gradient(circle at 90% 15%, var(--gold-soft) 0%, transparent 58%)',
+          }}
         >
-          <div className="noble-card relative overflow-hidden rounded-[20px] px-4 py-3.5 sm:px-5 sm:py-4 w-full flex flex-col justify-between gap-3">
-            <NonagonFiligree
-              rotationDeg={20}
-              className="pointer-events-none absolute -right-10 -top-14 z-0 w-44 h-44 opacity-[0.08]"
-            />
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-2 z-[1] rounded-[14px] border"
-              style={{ borderColor: 'var(--gold-hairline)' }}
-            />
+          {/* Mobile Left Motif + Copy | Desktop Editorial Header */}
+          <div className="relative z-10 flex items-center gap-3 min-w-0 md:block md:space-y-1">
+            <span className="md:hidden shrink-0" style={{ color: 'var(--gold)' }}>
+              <StacksIcon size={20} />
+            </span>
 
-            <div className="relative z-10 flex items-center gap-3.5 min-w-0">
-              <div
-                className="w-9 h-9 rounded-xl shrink-0 flex items-center justify-center"
-                style={{
-                  backgroundColor: 'var(--gold-soft)',
-                  color: 'var(--gold)',
-                  border: '1px solid var(--gold-hairline)',
-                }}
+            <div className="min-w-0 md:space-y-1">
+              <span
+                className="hidden md:block text-[10px] font-medium uppercase tracking-[0.16em]"
+                style={{ color: 'var(--gold)' }}
               >
-                <StacksIcon size={18} />
-              </div>
-              <div className="min-w-0">
-                <h2 className="font-serif-card text-[clamp(1.12rem,1.6vw,1.42rem)] font-medium m-0 leading-tight text-balance">
-                  Mix &amp; Match
-                </h2>
-                <p
-                  className="text-xs sm:text-[13px] m-0 mt-0.5 truncate max-w-full"
-                  style={{ color: 'var(--ink-muted)' }}
+                {isDe ? 'Eigener Mix' : 'Custom Blend'}
+              </span>
+              <h2 className="font-serif-card text-[1.15rem] md:text-[1.42rem] font-medium tracking-[-0.015em] leading-[1.15] m-0">
+                Mix &amp; Match
+              </h2>
+              <p
+                className="text-xs sm:text-[13px] m-0 leading-snug truncate max-w-full"
+                style={{ color: 'var(--ink-muted)' }}
+              >
+                {selectedStacks.length > 0
+                  ? `${selectedStacks
+                      .map((id) => {
+                        const found = visibleStacks.find((s) => s.id === id);
+                        return found ? (isDe ? found.nameDe : found.nameEn) : id;
+                      })
+                      .slice(0, 2)
+                      .join(' · ')}${
+                      selectedStacks.length > 2 ? ` +${selectedStacks.length - 2}` : ''
+                    } · ${mixCardCount} ${isDe ? 'Karten' : 'cards'}`
+                  : isDe
+                    ? 'Eigene Stapel-Kombination mischen'
+                    : 'Pick your own mix of stacks'}
+              </p>
+            </div>
+          </div>
+
+          {/* Mobile Action Pill | Desktop Emblem Strip + Baseline CTA */}
+          <div
+            className="relative z-10 shrink-0 md:flex md:items-center md:justify-between md:gap-2.5 md:pt-3 md:mt-1 md:border-t"
+            style={{ borderColor: 'var(--border)' }}
+          >
+            <div className="hidden md:flex items-center -space-x-2" aria-hidden="true">
+              {(selectedStacks.length > 0
+                ? visibleStacks.filter((s) => selectedStacks.includes(s.id)).slice(0, 3)
+                : [visibleStacks[0], visibleStacks[3], visibleStacks[5]].filter(Boolean)
+              ).map((s) => (
+                <div
+                  key={s.id}
+                  className="w-7 h-7 rounded-full flex items-center justify-center"
+                  style={{
+                    backgroundColor: 'var(--elevated)',
+                    color: 'var(--gold)',
+                    border: '1px solid var(--border-strong)',
+                  }}
                 >
-                  {isDe
-                    ? 'Stelle deine eigene Stapel-Kombination zusammen.'
-                    : 'Choose the exact combination of stacks you want.'}
-                </p>
-              </div>
+                  <StackArtwork stackId={s.id} iconId={s.iconId} size={13} />
+                </div>
+              ))}
             </div>
 
-            <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 pt-0.5">
-              <span className="text-[11px] font-medium" style={{ color: 'var(--ink-muted)' }}>
+            <span
+              className="min-h-[36px] md:min-h-[38px] px-3.5 md:px-4 rounded-full text-xs md:text-[13px] font-medium inline-flex items-center gap-1.5 shrink-0"
+              style={{
+                backgroundColor:
+                  selectedStacks.length > 0 ? 'var(--accent)' : 'var(--elevated)',
+                color: selectedStacks.length > 0 ? 'var(--accent-ink)' : 'var(--ink)',
+                border:
+                  selectedStacks.length > 0
+                    ? '1px solid var(--accent)'
+                    : '1px solid var(--border-strong)',
+              }}
+            >
+              <span className="md:hidden">
                 {selectedStacks.length > 0
                   ? isDe
-                    ? `${selectedStacks.length} ausgewählt · ${mixCardCount} Karten`
-                    : `${selectedStacks.length} selected · ${mixCardCount} cards`
+                    ? 'Anpassen'
+                    : 'Adjust'
                   : isDe
-                    ? 'Beliebige Stapel kombinieren'
-                    : 'Combine any stacks'}
+                    ? 'Wählen'
+                    : 'Choose'}
               </span>
-
-              <span
-                className="px-4 py-2 rounded-full text-xs sm:text-[13px] font-medium inline-flex items-center gap-1.5 shrink-0"
-                style={{
-                  backgroundColor: selectedStacks.length > 0 ? 'var(--accent)' : 'var(--elevated)',
-                  color: selectedStacks.length > 0 ? 'var(--accent-ink)' : 'var(--ink)',
-                  border:
-                    selectedStacks.length > 0
-                      ? '1px solid var(--accent)'
-                      : '1px solid var(--border-strong)',
-                }}
-              >
-                <span>{isDe ? 'Stapel wählen' : 'Choose stacks'}</span>
-                <ChevronRightIcon size={13} />
+              <span className="hidden md:inline">
+                {isDe ? 'Stapel wählen' : 'Choose stacks'}
               </span>
-            </div>
+              <ChevronRightIcon size={13} />
+            </span>
           </div>
         </motion.div>
       </motion.section>
