@@ -18,6 +18,7 @@ export const PlayPage: React.FC = () => {
     cards,
     playMode,
     startPlay,
+    updatePlayMode,
     focusCardId,
     clearFocusCard,
     isFavorite,
@@ -124,9 +125,9 @@ export const PlayPage: React.FC = () => {
   const isDe = lang === 'de';
 
   return (
-    <main className="candlelight-halo min-h-[calc(100dvh-60px)] md:h-[calc(100dvh-60px)] w-full px-3 sm:px-6 lg:px-10 pt-2 pb-[96px] md:pt-2 md:pb-4 flex flex-col justify-between gap-2">
+    <main className="candlelight-halo min-h-[calc(100dvh-60px)] w-full px-3 sm:px-6 lg:px-10 pt-2 pb-[96px] md:pt-2 md:pb-6 flex flex-col justify-between gap-3">
       {/* Quiet Sub-Header */}
-      <div className="w-full max-w-[min(95vw,1040px)] mx-auto flex flex-wrap items-center justify-between gap-3">
+      <div className="relative z-30 shrink-0 w-full max-w-[min(95vw,1040px)] mx-auto flex flex-wrap items-center justify-between gap-3">
         <button
           type="button"
           onClick={() => navigate('/')}
@@ -141,8 +142,9 @@ export const PlayPage: React.FC = () => {
         {playMode.type === 'journey' && (
           <JourneyLengthSlider
             compact
+            commitOnRelease
             value={playMode.length ?? 25}
-            onChange={(len) => startPlay({ type: 'journey', length: len })}
+            onChange={(len) => updatePlayMode({ type: 'journey', length: len })}
             lang={lang}
           />
         )}

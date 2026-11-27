@@ -357,10 +357,17 @@ select:focus-visible {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 6px;
-  border-radius: 9999px;
+  height: 24px;
+  background: transparent;
+  touch-action: none;
   outline: none;
   cursor: pointer;
+}
+
+.resonance-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  background: transparent;
+  border-radius: 9999px;
 }
 
 .resonance-slider::-webkit-slider-thumb {
@@ -368,6 +375,7 @@ select:focus-visible {
   appearance: none;
   width: 20px;
   height: 20px;
+  margin-top: -7px;
   border-radius: 9999px;
   background: var(--gold);
   border: 2.5px solid var(--card);
@@ -384,6 +392,12 @@ select:focus-visible {
   cursor: grabbing;
   transform: scale(1.06);
   box-shadow: 0 0 0 4px var(--gold-soft), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.resonance-slider::-moz-range-track {
+  height: 6px;
+  background: transparent;
+  border-radius: 9999px;
 }
 
 .resonance-slider::-moz-range-thumb {

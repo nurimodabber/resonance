@@ -1,4 +1,12 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { buildStackMap } from '../data/stacks';
 import {
   createGroupRoom,
@@ -58,6 +66,7 @@ interface ResonanceContextValue {
   isFavorite: (cardId: string) => boolean;
   playMode: PlayMode;
   startPlay: (mode: PlayMode) => void;
+  updatePlayMode: (mode: PlayMode) => void;
   focusCardId: string | null;
   openCardDirectly: (cardId: string) => void;
   clearFocusCard: () => void;
@@ -125,9 +134,12 @@ export const ResonanceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   });
 
+  const catalogLoadedRef = useRef(false);
+
   const refreshCatalog = useCallback(async () => {
     try {
       const loaded = await fetchCatalog(false);
+      catalogLoadedRef.current = true;
       setStacks(loaded.stacks);
       setCards(loaded.cards);
     } catch {
@@ -138,8 +150,10 @@ export const ResonanceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const refreshCards = refreshCatalog;
 
   useEffect(() => {
-    refreshCatalog();
-  }, [refreshCatalog]);
+    if (!route.startsWith('/admin') && !catalogLoadedRef.current) {
+      refreshCatalog();
+    }
+  }, [route, refreshCatalog]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -220,6 +234,11 @@ export const ResonanceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [navigate],
   );
 
+  const updatePlayMode = useCallback((mode: PlayMode) => {
+    setFocusCardId(null);
+    setPlayMode(mode);
+  }, []);
+
   const openCardDirectly = useCallback(
     (cardId: string) => {
       const target = cards.find((c) => c.id === cardId);
@@ -280,6 +299,7 @@ export const ResonanceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         isFavorite,
         playMode,
         startPlay,
+        updatePlayMode,
         focusCardId,
         openCardDirectly,
         clearFocusCard,

@@ -28,6 +28,19 @@ export function reviewerBlobPath(reviewerId: string): string {
 export interface ReviewStateRecord {
   promotedIds: string[];
   dismissedEditIds: string[];
+  suggestionOverrides?: Record<string, Partial<CardItem>>;
+}
+
+export function mergeSuggestionWithOverride(
+  source: CardItem,
+  override?: Partial<CardItem>,
+): CardItem {
+  if (!override || typeof override !== 'object') return source;
+  return {
+    ...source,
+    ...override,
+    id: source.id,
+  };
 }
 
 export function roomBlobPath(code: string): string {
@@ -149,9 +162,15 @@ export async function getInboxSubmissions(): Promise<GroupSubmission[]> {
 
 export async function getReviewState(): Promise<ReviewStateRecord> {
   const existing = await readJsonBlob<ReviewStateRecord>(REVIEW_STATE_PATH);
+  const rawOverrides = existing?.suggestionOverrides;
+  const suggestionOverrides =
+    rawOverrides && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides)
+      ? rawOverrides
+      : {};
   return {
     promotedIds: Array.isArray(existing?.promotedIds) ? existing.promotedIds : [],
     dismissedEditIds: Array.isArray(existing?.dismissedEditIds) ? existing.dismissedEditIds : [],
+    suggestionOverrides,
   };
 }
 
@@ -170,7 +189,7 @@ export async function listAllReviewerRecords(): Promise<ReviewerRecord[]> {
   } while (cursor);
 
   const records: ReviewerRecord[] = [];
-  const batchSize = 12;
+  const batchSize = 24;
   for (let i = 0; i < pathnames.length; i += batchSize) {
     const chunk = pathnames.slice(i, i + batchSize);
     const results = await Promise.allSettled(

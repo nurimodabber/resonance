@@ -60,6 +60,7 @@ export interface AdminReviewSummary {
   stats: ReviewCardStats[];
   promotedIds: string[];
   dismissedEditIds: string[];
+  editedSuggestionIds?: string[];
 }
 
 const LS_STACKS = 'resonance.localStacks.v1';
@@ -723,6 +724,52 @@ export function subscribeToRoomSubmissions(
   };
 }
 
+export async function editGroupSubmission(input: {
+  id: string;
+  text: string;
+  language: Language;
+  authorName?: string;
+  promotedStackId?: StackId;
+}): Promise<GroupSubmission> {
+  const trimmedText = input.text.trim();
+  const cleanAuthor = input.authorName !== undefined ? input.authorName.trim() || undefined : undefined;
+  const cleanStackId =
+    input.promotedStackId !== undefined ? input.promotedStackId.trim() || undefined : undefined;
+
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ ok: boolean; submission: GroupSubmission }>('/api/admin/insights', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'edit-submission',
+        id: input.id,
+        text: trimmedText,
+        language: input.language,
+        ...(input.authorName !== undefined ? { authorName: cleanAuthor ?? '' } : {}),
+        ...(input.promotedStackId !== undefined ? { promotedStackId: cleanStackId ?? '' } : {}),
+      }),
+    });
+    if (!res.ok) throw new Error(res.error);
+    return res.data.submission;
+  }
+
+  const list = lsRead<GroupSubmission[]>(LS_SUBMISSIONS, []);
+  let updatedItem: GroupSubmission | null = null;
+  const next = list.map((item) => {
+    if (item.id !== input.id) return item;
+    updatedItem = {
+      ...item,
+      text: trimmedText,
+      language: input.language,
+      authorName: input.authorName !== undefined ? cleanAuthor : item.authorName,
+      promotedStackId: input.promotedStackId !== undefined ? cleanStackId : item.promotedStackId,
+    };
+    return updatedItem;
+  });
+  if (!updatedItem) throw new Error('Submission not found.');
+  lsWrite(LS_SUBMISSIONS, next);
+  return updatedItem;
+}
+
 export async function updateSubmissionStatus(
   id: string,
   status: GroupSubmission['status'],
@@ -816,14 +863,34 @@ function readLocalReviewerRecord(): ReviewerRecord {
   };
 }
 
-function readLocalReviewState(): { promotedIds: string[]; dismissedEditIds: string[] } {
-  const state = lsRead<{ promotedIds?: string[]; dismissedEditIds?: string[] }>(
-    LS_LOCAL_REVIEW_STATE,
-    {},
-  );
+function readLocalReviewState(): {
+  promotedIds: string[];
+  dismissedEditIds: string[];
+  suggestionOverrides: Record<string, Partial<CardItem>>;
+} {
+  const state = lsRead<{
+    promotedIds?: string[];
+    dismissedEditIds?: string[];
+    suggestionOverrides?: Record<string, Partial<CardItem>>;
+  }>(LS_LOCAL_REVIEW_STATE, {});
+  const rawOverrides = state.suggestionOverrides;
+  const suggestionOverrides =
+    rawOverrides && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides)
+      ? rawOverrides
+      : {};
   return {
     promotedIds: Array.isArray(state.promotedIds) ? state.promotedIds : [],
     dismissedEditIds: Array.isArray(state.dismissedEditIds) ? state.dismissedEditIds : [],
+    suggestionOverrides,
+  };
+}
+
+function mergeSuggestionLocal(source: CardItem, override?: Partial<CardItem>): CardItem {
+  if (!override || typeof override !== 'object') return source;
+  return {
+    ...source,
+    ...override,
+    id: source.id,
   };
 }
 
@@ -862,7 +929,9 @@ export async function fetchReviewBundle(): Promise<ReviewBundle> {
     mode: 'local',
     stacks,
     liveCards,
-    suggestions: REVIEW_SUGGESTIONS.filter((s) => !promotedSet.has(s.id)),
+    suggestions: REVIEW_SUGGESTIONS.map((s) =>
+      mergeSuggestionLocal(s, state.suggestionOverrides[s.id]),
+    ).filter((s) => !promotedSet.has(s.id)),
     promotedIds: [...promotedSet],
     myRecord: readLocalReviewerRecord(),
   };
@@ -1015,7 +1084,9 @@ export async function fetchAdminReviewSummary(): Promise<AdminReviewSummary> {
     })),
     stacks,
     stats: aggregateReviewStats({
-      suggestions: REVIEW_SUGGESTIONS,
+      suggestions: REVIEW_SUGGESTIONS.map((s) =>
+        mergeSuggestionLocal(s, state.suggestionOverrides[s.id]),
+      ),
       liveCards,
       reviewers,
       promotedIds: state.promotedIds,
@@ -1024,18 +1095,42 @@ export async function fetchAdminReviewSummary(): Promise<AdminReviewSummary> {
     }),
     promotedIds: state.promotedIds,
     dismissedEditIds: state.dismissedEditIds,
+    editedSuggestionIds: Object.keys(state.suggestionOverrides),
   };
 }
 
+export async function saveReviewSuggestionDraft(card: CardItem): Promise<CardItem> {
+  if ((await ensureBackendProbed()) === 'vercel') {
+    const res = await apiJson<{ ok: boolean; card: CardItem }>('/api/admin/review', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'save-suggestion-draft', card }),
+    });
+    if (!res.ok) throw new Error(res.error);
+    return res.data.card;
+  }
+
+  const state = readLocalReviewState();
+  const nextOverrides = {
+    ...state.suggestionOverrides,
+    [card.id]: { ...card, id: card.id },
+  };
+  lsWrite(LS_LOCAL_REVIEW_STATE, {
+    ...state,
+    suggestionOverrides: nextOverrides,
+  });
+  return card;
+}
+
 export async function promoteReviewSuggestions(
-  items: Array<{ id: string; stackId?: string; de?: string; en?: string }>,
+  items: Array<Partial<CardItem> & { id: string }>,
+  dismissEditIds?: string[],
 ): Promise<{ addedCount: number; promotedIds: string[] }> {
   if ((await ensureBackendProbed()) === 'vercel') {
     const res = await apiJson<{ ok: boolean; addedCount: number; promotedIds: string[] }>(
       '/api/admin/review',
       {
         method: 'POST',
-        body: JSON.stringify({ action: 'promote', items }),
+        body: JSON.stringify({ action: 'promote', items, dismissEditIds }),
       },
     );
     if (!res.ok) throw new Error(res.error);
@@ -1046,25 +1141,42 @@ export async function promoteReviewSuggestions(
   const byId = new Map(REVIEW_SUGGESTIONS.map((c) => [c.id, c]));
   const state = readLocalReviewState();
   const promotedSet = new Set(state.promotedIds);
+  const dismissedSet = new Set(state.dismissedEditIds);
+  if (Array.isArray(dismissEditIds)) {
+    for (const editId of dismissEditIds) {
+      if (editId) dismissedSet.add(editId);
+    }
+  }
+  const nextOverrides = { ...state.suggestionOverrides };
   let addedCount = 0;
 
   for (const item of items) {
     const src = byId.get(item.id);
     if (!src) continue;
-    await upsertCard({
-      ...src,
-      stackId: item.stackId || src.stackId,
-      de: item.de?.trim() || src.de,
-      en: item.en?.trim() || src.en,
+    const base = mergeSuggestionLocal(src, nextOverrides[item.id]);
+    const resolved: CardItem = {
+      ...base,
+      ...item,
+      id: src.id,
+      stackId: item.stackId?.trim() || base.stackId,
+      de: item.de?.trim() || base.de,
+      en: item.en?.trim() || base.en,
       isCustom: true,
       archived: false,
       createdAt: new Date().toISOString(),
-    });
+    };
+    await upsertCard(resolved);
     promotedSet.add(item.id);
+    delete nextOverrides[item.id];
     addedCount += 1;
   }
 
-  const nextState = { ...state, promotedIds: [...promotedSet] };
+  const nextState = {
+    ...state,
+    promotedIds: [...promotedSet],
+    dismissedEditIds: [...dismissedSet],
+    suggestionOverrides: nextOverrides,
+  };
   lsWrite(LS_LOCAL_REVIEW_STATE, nextState);
   return { addedCount, promotedIds: nextState.promotedIds };
 }
@@ -1091,24 +1203,28 @@ export async function applyReviewEditSuggestion(input: {
     await dismissReviewEditSuggestion(input.editId);
   } else {
     const { REVIEW_SUGGESTIONS } = await import('../data/reviewSuggestions');
+    const state = readLocalReviewState();
     const src = REVIEW_SUGGESTIONS.find((c) => c.id === input.cardId);
+    const nextOverrides = { ...state.suggestionOverrides };
     if (src) {
+      const base = mergeSuggestionLocal(src, nextOverrides[input.cardId]);
       await upsertCard({
-        ...src,
+        ...base,
         [input.language]: input.newText,
         isCustom: true,
         archived: false,
         createdAt: new Date().toISOString(),
       });
     }
-    const state = readLocalReviewState();
     const promotedSet = new Set(state.promotedIds);
     promotedSet.add(input.cardId);
     const dismissedSet = new Set(state.dismissedEditIds);
     dismissedSet.add(input.editId);
+    delete nextOverrides[input.cardId];
     lsWrite(LS_LOCAL_REVIEW_STATE, {
       promotedIds: [...promotedSet],
       dismissedEditIds: [...dismissedSet],
+      suggestionOverrides: nextOverrides,
     });
   }
 }

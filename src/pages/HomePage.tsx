@@ -70,9 +70,11 @@ const frontCardVariants = {
 };
 
 export const HomePage: React.FC = () => {
-  const { lang, stacks, cards, startPlay, setQrModalOpen } = useResonance();
+  const { lang, stacks, cards, playMode, startPlay, setQrModalOpen } = useResonance();
   const [selectedStacks, setSelectedStacks] = useState<StackId[]>([]);
-  const [journeyLength, setJourneyLength] = useState<JourneyLength>(25);
+  const [journeyLength, setJourneyLength] = useState<JourneyLength>(() =>
+    playMode.type === 'journey' && playMode.length ? playMode.length : 25,
+  );
   const [mixModalOpen, setMixModalOpen] = useState(false);
   const [mixQuoteSubdeck, setMixQuoteSubdeck] = useState<QuoteSubdeck | 'all'>('all');
 

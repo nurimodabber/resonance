@@ -6,6 +6,7 @@ import {
   getReviewState,
   getStacksOrSeed,
   isBlobConfigured,
+  mergeSuggestionWithOverride,
   readJsonBlob,
   reviewerBlobPath,
   writeJsonBlob,
@@ -62,7 +63,9 @@ export async function GET(request: Request): Promise<Response> {
     const liveIds = new Set(visibleLiveCards.map((c) => c.id));
     const promotedSet = new Set([...reviewState.promotedIds, ...liveIds]);
 
-    const visibleSuggestions = REVIEW_SUGGESTIONS.filter(
+    const visibleSuggestions = REVIEW_SUGGESTIONS.map((s) =>
+      mergeSuggestionWithOverride(s, reviewState.suggestionOverrides?.[s.id]),
+    ).filter(
       (s) => !promotedSet.has(s.id) && (s.kind === 'wildcard' || activeStackIds.has(s.stackId)),
     );
 

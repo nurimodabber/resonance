@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -22,6 +22,11 @@ import {
   Sun,
   X,
 } from 'lucide-react';
+import {
+  CardEditorModal,
+  InboxSubmissionModal,
+  SuggestionEditorModal,
+} from '../components/admin/AdminModals';
 import { ConcentricLogo, StackArtwork, ThumbDownIcon, ThumbUpIcon } from '../components/Icons';
 import { useResonance } from '../context/ResonanceContext';
 import { buildStackMap, getStackMetaSafe, STACK_ICON_IDS } from '../data/stacks';
@@ -33,15 +38,16 @@ import {
   deleteCard,
   deleteStack,
   dismissReviewEditSuggestion,
+  editGroupSubmission,
   fetchAdminAuthStatus,
   fetchAdminInsights,
   fetchAdminReviewSummary,
   loginAdmin,
   logoutAdmin,
-  moveCardStack,
   promoteReviewSuggestions,
   reorderStacks,
   reseedMissingCards,
+  saveReviewSuggestionDraft,
   SEED_CARDS,
   setupAdmin,
   summarizeRatings,
@@ -61,9 +67,8 @@ import type {
   CardKind,
   CardRating,
   GroupSubmission,
-  QuoteSubdeck,
+  Language,
   RecommendationPreset,
-  RuhiChapter,
   StackIconId,
   StackId,
   StackMeta,
@@ -133,7 +138,11 @@ export const AdminPage: React.FC = () => {
   const [kindFilter, setKindFilter] = useState<CardKind | 'all'>('all');
   const [cardStatusFilter, setCardStatusFilter] = useState<CardStatusFilter>('active');
   const [confirmDeleteCardId, setConfirmDeleteCardId] = useState<string | null>(null);
-  const [editingCard, setEditingCard] = useState<CardItem | null>(null);
+  const [editingCard, setEditingCard] = useState<{
+    card: CardItem;
+    pendingEdits?: AdminReviewSummary['stats'][number]['edits'];
+    dismissEditId?: string;
+  } | null>(null);
 
   // Stacks filters & modals
   const [stackStatusFilter, setStackStatusFilter] = useState<StackStatusFilter>('all');
@@ -147,15 +156,10 @@ export const AdminPage: React.FC = () => {
     reassignTo: StackId;
   } | null>(null);
 
-  // Inbox filters & promote modal
+  // Inbox filters & submission modal
   const [inboxStatusTab, setInboxStatusTab] = useState<InboxStatusTab>('pending');
   const [inboxSearch, setInboxSearch] = useState('');
-  const [promoting, setPromoting] = useState<{
-    sub: GroupSubmission;
-    stackId: StackId;
-    de: string;
-    en: string;
-  } | null>(null);
+  const [editingSubmission, setEditingSubmission] = useState<GroupSubmission | null>(null);
 
   // Insights sub-tab
   const [insightsSubTab, setInsightsSubTab] = useState<InsightsSubTab>('best');
@@ -167,50 +171,54 @@ export const AdminPage: React.FC = () => {
 
   // Friend Review tab state
   const [reviewSummary, setReviewSummary] = useState<AdminReviewSummary | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewPreset, setReviewPreset] = useState<RecommendationPreset>('auto');
   const [reviewCategory, setReviewCategory] = useState<string>('all');
   const [reviewSubTab, setReviewSubTab] = useState<ReviewSubTab>('suggestion');
   const [reviewSearch, setReviewSearch] = useState('');
   const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(new Set());
   const [copiedReviewLink, setCopiedReviewLink] = useState(false);
+  const [editingSuggestion, setEditingSuggestion] = useState<{
+    card: CardItem;
+    pendingEdits: AdminReviewSummary['stats'][number]['edits'];
+    dismissEditId?: string;
+  } | null>(null);
+
+  // Pagination & deferred search for 60fps typing/rendering
+  const [cardsVisibleCount, setCardsVisibleCount] = useState(50);
+  const [reviewVisibleCount, setReviewVisibleCount] = useState(50);
+  const deferredSearch = useDeferredValue(search);
+  const deferredReviewSearch = useDeferredValue(reviewSearch);
+  const deferredInboxSearch = useDeferredValue(inboxSearch);
 
   const stackMap = useMemo(() => buildStackMap(adminStacks), [adminStacks]);
   const ratingSummary = useMemo(() => summarizeRatings(ratings), [ratings]);
   const firstStackId = adminStacks[0]?.id ?? 'warmup';
   const quotesStackId = adminStacks.find((s) => s.id === 'quotes')?.id ?? firstStackId;
 
-  const loadAdminData = useCallback(async () => {
-    const [insightsRes, reviewRes] = await Promise.allSettled([
-      fetchAdminInsights(),
-      fetchAdminReviewSummary(),
-    ]);
-
-    const errors: string[] = [];
-    if (insightsRes.status === 'fulfilled') {
-      setAdminStacks(insightsRes.value.stacks);
-      setAdminCards(insightsRes.value.cards);
-      setRatings(insightsRes.value.ratings);
-      setSubmissions(insightsRes.value.submissions);
-    } else {
-      errors.push(
-        insightsRes.reason instanceof Error
-          ? insightsRes.reason.message
-          : 'Failed to load admin insights.',
-      );
+  const loadInsightsData = useCallback(async () => {
+    try {
+      const insightsRes = await fetchAdminInsights();
+      setAdminStacks(insightsRes.stacks);
+      setAdminCards(insightsRes.cards);
+      setRatings(insightsRes.ratings);
+      setSubmissions(insightsRes.submissions);
+    } catch (err) {
+      setErrorBanner(err instanceof Error ? err.message : 'Failed to load admin insights.');
     }
+  }, []);
 
-    if (reviewRes.status === 'fulfilled') {
-      setReviewSummary(reviewRes.value);
-    } else {
-      errors.push(
-        reviewRes.reason instanceof Error
-          ? reviewRes.reason.message
-          : 'Failed to load friend review summary.',
+  const loadReviewData = useCallback(async () => {
+    setReviewLoading(true);
+    try {
+      const reviewRes = await fetchAdminReviewSummary();
+      setReviewSummary(reviewRes);
+    } catch (err) {
+      setErrorBanner(
+        err instanceof Error ? err.message : 'Failed to load friend review summary.',
       );
-    }
-
-    if (errors.length > 0) {
-      setErrorBanner(errors.join(' '));
+    } finally {
+      setReviewLoading(false);
     }
   }, []);
 
@@ -232,9 +240,18 @@ export const AdminPage: React.FC = () => {
 
   useEffect(() => {
     if (authStatus?.authenticated) {
-      loadAdminData();
+      loadInsightsData();
+      loadReviewData();
     }
-  }, [authStatus?.authenticated, loadAdminData]);
+  }, [authStatus?.authenticated, loadInsightsData, loadReviewData]);
+
+  useEffect(() => {
+    setCardsVisibleCount(50);
+  }, [kindFilter, stackFilter, cardStatusFilter, deferredSearch]);
+
+  useEffect(() => {
+    setReviewVisibleCount(50);
+  }, [reviewSubTab, reviewCategory, deferredReviewSearch]);
 
   const cardCountsByStack = useMemo(() => {
     const counts: Record<string, { active: number; total: number }> = {};
@@ -263,7 +280,7 @@ export const AdminPage: React.FC = () => {
   }, [adminCards, cardStatusFilter]);
 
   const filteredCards = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = deferredSearch.trim().toLowerCase();
     return adminCards.filter((c) => {
       if (cardStatusFilter === 'active' && c.archived) return false;
       if (cardStatusFilter === 'archived' && !c.archived) return false;
@@ -279,7 +296,7 @@ export const AdminPage: React.FC = () => {
       }
       return true;
     });
-  }, [adminCards, cardStatusFilter, stackFilter, kindFilter, search]);
+  }, [adminCards, cardStatusFilter, stackFilter, kindFilter, deferredSearch]);
 
   const stackStatusCounts = useMemo(() => {
     return {
@@ -338,7 +355,7 @@ export const AdminPage: React.FC = () => {
   );
 
   const filteredInbox = useMemo(() => {
-    const q = inboxSearch.trim().toLowerCase();
+    const q = deferredInboxSearch.trim().toLowerCase();
     return submissions.filter((s) => {
       if (s.status !== inboxStatusTab) return false;
       if (!q) return true;
@@ -348,7 +365,7 @@ export const AdminPage: React.FC = () => {
         (s.authorName?.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [submissions, inboxStatusTab, inboxSearch]);
+  }, [submissions, inboxStatusTab, deferredInboxSearch]);
 
   const recommendedReviewIds = useMemo(() => {
     if (!reviewSummary) return new Set<string>();
@@ -379,7 +396,7 @@ export const AdminPage: React.FC = () => {
 
   const filteredReviewStats = useMemo(() => {
     if (!reviewSummary || reviewSubTab === 'edits') return [];
-    const q = reviewSearch.trim().toLowerCase();
+    const q = deferredReviewSearch.trim().toLowerCase();
     const base = reviewSummary.stats.filter((item) => {
       if (item.source !== reviewSubTab) return false;
       if (reviewCategory !== 'all' && reviewCategoryKey(item.card) !== reviewCategory) {
@@ -396,11 +413,11 @@ export const AdminPage: React.FC = () => {
       return true;
     });
     return sortReviewStats(base);
-  }, [reviewSummary, reviewSubTab, reviewCategory, reviewSearch]);
+  }, [reviewSummary, reviewSubTab, reviewCategory, deferredReviewSearch]);
 
   const visiblePendingEdits = useMemo(() => {
     if (!reviewSummary) return [];
-    const q = reviewSearch.trim().toLowerCase();
+    const q = deferredReviewSearch.trim().toLowerCase();
     const out: Array<{
       stat: AdminReviewSummary['stats'][number];
       edit: AdminReviewSummary['stats'][number]['edits'][number];
@@ -422,7 +439,7 @@ export const AdminPage: React.FC = () => {
       }
     }
     return out;
-  }, [reviewSummary, reviewCategory, reviewSearch]);
+  }, [reviewSummary, reviewCategory, deferredReviewSearch]);
 
   const selectedVisibleReviewIds = useMemo(() => {
     if (reviewSubTab !== 'suggestion') return [];
@@ -430,6 +447,16 @@ export const AdminPage: React.FC = () => {
       .filter((s) => !s.promoted && selectedReviewIds.has(s.cardId))
       .map((s) => s.cardId);
   }, [filteredReviewStats, selectedReviewIds, reviewSubTab]);
+
+  const visibleCards = useMemo(
+    () => filteredCards.slice(0, cardsVisibleCount),
+    [filteredCards, cardsVisibleCount],
+  );
+
+  const visibleReviewStats = useMemo(
+    () => filteredReviewStats.slice(0, reviewVisibleCount),
+    [filteredReviewStats, reviewVisibleCount],
+  );
 
   const notifyOk = (msg: string) => {
     setErrorBanner('');
@@ -445,13 +472,25 @@ export const AdminPage: React.FC = () => {
     if (syncing) return;
     setSyncing(true);
     try {
-      await Promise.all([loadAdminData(), refreshCatalog()]);
+      await Promise.all([loadInsightsData(), loadReviewData(), refreshCatalog()]);
       notifyOk(isDe ? 'Daten synchronisiert.' : 'Synced with backend.');
     } catch (err) {
       notifyErr(err);
     } finally {
       setSyncing(false);
     }
+  };
+
+  const openCardEditor = (
+    card: CardItem,
+    pendingEdits?: AdminReviewSummary['stats'][number]['edits'],
+    dismissEditId?: string,
+  ) => {
+    setEditingCard({
+      card: { ...card },
+      pendingEdits,
+      dismissEditId,
+    });
   };
 
   const openQuickNewCard = (kind: CardKind) => {
@@ -461,7 +500,7 @@ export const AdminPage: React.FC = () => {
         : stackFilter !== 'all'
           ? stackFilter
           : firstStackId;
-    setEditingCard({
+    openCardEditor({
       id: `C_${Date.now()}`,
       stackId: defaultStack,
       kind,
@@ -505,11 +544,64 @@ export const AdminPage: React.FC = () => {
     setBusyAction(true);
     try {
       const res = await promoteReviewSuggestions(ids.map((id) => ({ id })));
-      await Promise.all([loadAdminData(), refreshCatalog()]);
+      await Promise.all([loadInsightsData(), loadReviewData()]);
       notifyOk(
         isDe
           ? `${res.addedCount} ausgewählte Vorschläge auf die Live-Website übernommen.`
           : `Added ${res.addedCount} reviewed suggestions to the live website.`,
+      );
+    } catch (err) {
+      notifyErr(err);
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleSaveSuggestionDraft = async (card: CardItem) => {
+    if (busyAction) return;
+    setBusyAction(true);
+    try {
+      const saved = await saveReviewSuggestionDraft(card);
+      setReviewSummary((prev) => {
+        if (!prev) return prev;
+        const nextEdited = new Set(prev.editedSuggestionIds || []);
+        nextEdited.add(saved.id);
+        return {
+          ...prev,
+          editedSuggestionIds: [...nextEdited],
+          stats: prev.stats.map((s) => (s.cardId === saved.id ? { ...s, card: saved } : s)),
+        };
+      });
+      setEditingSuggestion(null);
+      notifyOk(isDe ? 'Vorschlag als Entwurf gespeichert.' : 'Saved suggestion draft.');
+    } catch (err) {
+      notifyErr(err);
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handlePublishEditedSuggestion = async (card: CardItem, dismissEditId?: string) => {
+    if (busyAction) return;
+    if (!card.de.trim() || !card.en.trim()) {
+      notifyErr(
+        new Error(
+          isDe
+            ? 'Deutscher und englischer Text sind erforderlich.'
+            : 'Both German and English card text are required.',
+        ),
+      );
+      return;
+    }
+    setBusyAction(true);
+    try {
+      await promoteReviewSuggestions([card], dismissEditId ? [dismissEditId] : undefined);
+      await Promise.all([loadInsightsData(), loadReviewData()]);
+      setEditingSuggestion(null);
+      notifyOk(
+        isDe
+          ? 'Bearbeiteter Vorschlag live geschaltet.'
+          : 'Edited suggestion published to live deck.',
       );
     } catch (err) {
       notifyErr(err);
@@ -528,7 +620,7 @@ export const AdminPage: React.FC = () => {
     setBusyAction(true);
     try {
       await applyReviewEditSuggestion({ cardId, language, newText, editId });
-      await Promise.all([loadAdminData(), refreshCatalog()]);
+      await Promise.all([loadInsightsData(), loadReviewData()]);
       notifyOk(
         isDe
           ? 'Formulierung übernommen und auf Live-Karte gespeichert.'
@@ -546,7 +638,25 @@ export const AdminPage: React.FC = () => {
     setBusyAction(true);
     try {
       await dismissReviewEditSuggestion(editId);
-      await loadAdminData();
+      setReviewSummary((prev) => {
+        if (!prev) return prev;
+        const nextDismissed = new Set(prev.dismissedEditIds);
+        nextDismissed.add(editId);
+        return {
+          ...prev,
+          dismissedEditIds: [...nextDismissed],
+          stats: prev.stats.map((s) =>
+            s.edits.some((ed) => ed.id === editId)
+              ? {
+                  ...s,
+                  edits: s.edits.map((ed) =>
+                    ed.id === editId ? { ...ed, dismissed: true } : ed,
+                  ),
+                }
+              : s,
+          ),
+        };
+      });
     } catch (err) {
       notifyErr(err);
     } finally {
@@ -596,7 +706,7 @@ export const AdminPage: React.FC = () => {
         authenticated: true,
         email: res.email,
       });
-      await Promise.all([loadAdminData(), refreshCatalog()]);
+      await Promise.all([loadInsightsData(), loadReviewData()]);
       notifyOk(
         isDe
           ? 'Admin-Zugang aktiviert. Du bist jetzt angemeldet.'
@@ -627,7 +737,8 @@ export const AdminPage: React.FC = () => {
               email: res.email,
             },
       );
-      await loadAdminData();
+      loadInsightsData();
+      loadReviewData();
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : 'Sign in failed');
     } finally {
@@ -674,34 +785,44 @@ export const AdminPage: React.FC = () => {
 
   // ---------- Card Handlers ----------
 
-  const handleSaveCard = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingCard || busyAction) return;
+  const handleSaveCard = async (card: CardItem, dismissEditId?: string) => {
+    if (busyAction) return;
     setBusyAction(true);
     try {
-      await upsertCard(editingCard);
-      await Promise.all([loadAdminData(), refreshCatalog()]);
+      const saved = await upsertCard(card);
+      if (dismissEditId) {
+        await dismissReviewEditSuggestion(dismissEditId);
+      }
+      setAdminCards((prev) =>
+        prev.some((c) => c.id === saved.id)
+          ? prev.map((c) => (c.id === saved.id ? saved : c))
+          : [saved, ...prev],
+      );
+      setReviewSummary((prev) => {
+        if (!prev) return prev;
+        const nextDismissed = dismissEditId
+          ? [...new Set([...prev.dismissedEditIds, dismissEditId])]
+          : prev.dismissedEditIds;
+        return {
+          ...prev,
+          dismissedEditIds: nextDismissed,
+          stats: prev.stats.map((s) =>
+            s.cardId === saved.id
+              ? {
+                  ...s,
+                  card: saved,
+                  edits: dismissEditId
+                    ? s.edits.map((ed) =>
+                        ed.id === dismissEditId ? { ...ed, dismissed: true } : ed,
+                      )
+                    : s.edits,
+                }
+              : s,
+          ),
+        };
+      });
       setEditingCard(null);
       notifyOk(isDe ? 'Karte gespeichert.' : 'Card saved.');
-    } catch (err) {
-      notifyErr(err);
-    } finally {
-      setBusyAction(false);
-    }
-  };
-
-  const handleMoveCardStack = async (card: CardItem, nextStackId: StackId) => {
-    if (card.stackId === nextStackId || busyAction) return;
-    setBusyAction(true);
-    try {
-      await moveCardStack(card.id, nextStackId);
-      const targetName = stackMap[nextStackId]?.nameEn ?? nextStackId;
-      await Promise.all([loadAdminData(), refreshCatalog()]);
-      notifyOk(
-        isDe
-          ? `Karte ${card.id} nach „${stackMap[nextStackId]?.nameDe ?? nextStackId}“ verschoben.`
-          : `Moved card ${card.id} to "${targetName}".`,
-      );
     } catch (err) {
       notifyErr(err);
     } finally {
@@ -713,8 +834,18 @@ export const AdminPage: React.FC = () => {
     if (busyAction) return;
     setBusyAction(true);
     try {
-      await archiveCard(card.id, !card.archived);
-      await Promise.all([loadAdminData(), refreshCatalog()]);
+      const updated = await archiveCard(card.id, !card.archived);
+      setAdminCards((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      setReviewSummary((prev) =>
+        prev
+          ? {
+              ...prev,
+              stats: prev.stats.map((s) =>
+                s.cardId === updated.id ? { ...s, card: updated } : s,
+              ),
+            }
+          : prev,
+      );
       notifyOk(
         card.archived
           ? isDe
@@ -737,7 +868,18 @@ export const AdminPage: React.FC = () => {
     try {
       await deleteCard(id);
       setConfirmDeleteCardId(null);
-      await Promise.all([loadAdminData(), refreshCatalog()]);
+      setAdminCards((prev) => prev.filter((c) => c.id !== id));
+      setReviewSummary((prev) =>
+        prev
+          ? {
+              ...prev,
+              promotedIds: prev.promotedIds.filter((pid) => pid !== id),
+              stats: prev.stats.map((s) =>
+                s.cardId === id && s.source === 'suggestion' ? { ...s, promoted: false } : s,
+              ),
+            }
+          : prev,
+      );
       notifyOk(isDe ? `Karte ${id} gelöscht.` : `Deleted card ${id}.`);
     } catch (err) {
       notifyErr(err);
@@ -755,7 +897,6 @@ export const AdminPage: React.FC = () => {
     try {
       const nextStacks = await upsertStack(editingStack.stack);
       setAdminStacks(nextStacks);
-      await Promise.all([loadAdminData(), refreshCatalog()]);
       setEditingStack(null);
       notifyOk(
         editingStack.isNew
@@ -789,7 +930,6 @@ export const AdminPage: React.FC = () => {
     try {
       const next = await reorderStacks(copy.map((s) => s.id));
       setAdminStacks(next);
-      await refreshCatalog();
       notifyOk(isDe ? 'Reihenfolge gespeichert.' : 'Stack order updated.');
     } catch (err) {
       notifyErr(err);
@@ -804,7 +944,6 @@ export const AdminPage: React.FC = () => {
     try {
       const next = await archiveStack(stack.id, !stack.archived);
       setAdminStacks(next);
-      await Promise.all([loadAdminData(), refreshCatalog()]);
       notifyOk(
         stack.archived
           ? isDe
@@ -849,8 +988,14 @@ export const AdminPage: React.FC = () => {
         deletingStack.cardCount > 0 ? deletingStack.reassignTo : undefined,
       );
       setAdminStacks(next);
+      if (deletingStack.cardCount > 0) {
+        const deletedId = deletingStack.stack.id;
+        const targetId = deletingStack.reassignTo;
+        setAdminCards((prev) =>
+          prev.map((c) => (c.stackId === deletedId ? { ...c, stackId: targetId } : c)),
+        );
+      }
       if (stackFilter === deletingStack.stack.id) setStackFilter('all');
-      await Promise.all([loadAdminData(), refreshCatalog()]);
       notifyOk(
         deletingStack.cardCount > 0
           ? isDe
@@ -870,24 +1015,54 @@ export const AdminPage: React.FC = () => {
 
   // ---------- Inbox & Reseed & Export ----------
 
-  const handlePromoteSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!promoting || busyAction) return;
+  const handleSaveInboxDraft = async (input: {
+    id: string;
+    text: string;
+    language: Language;
+    authorName?: string;
+    promotedStackId?: StackId;
+  }) => {
+    if (busyAction) return;
     setBusyAction(true);
     try {
-      const newCard: CardItem = {
-        id: `C_${Date.now()}`,
-        stackId: promoting.stackId,
-        kind: promoting.stackId === 'quotes' ? 'quote' : 'question',
-        de: promoting.de.trim(),
-        en: promoting.en.trim(),
-        isCustom: true,
-        contributedBy: promoting.sub.authorName,
-        createdAt: new Date().toISOString(),
-      };
-      await updateSubmissionStatus(promoting.sub.id, 'promoted', promoting.stackId, newCard);
-      await Promise.all([loadAdminData(), refreshCatalog()]);
-      setPromoting(null);
+      const updated = await editGroupSubmission(input);
+      setSubmissions((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setEditingSubmission(null);
+      notifyOk(isDe ? 'Einreichung aktualisiert.' : 'Submission draft saved.');
+    } catch (err) {
+      notifyErr(err);
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handlePromoteInboxSubmission = async (submissionId: string, card: CardItem) => {
+    if (busyAction) return;
+    if (!card.stackId.trim()) {
+      notifyErr(
+        new Error(
+          isDe
+            ? 'Bitte zuerst eine Kategorie (Stapel) wählen.'
+            : 'Please choose a category (stack) first.',
+        ),
+      );
+      return;
+    }
+    if (!card.de.trim() || !card.en.trim()) {
+      notifyErr(
+        new Error(
+          isDe
+            ? 'Deutscher und englischer Text sind erforderlich.'
+            : 'Both German and English card text are required.',
+        ),
+      );
+      return;
+    }
+    setBusyAction(true);
+    try {
+      await updateSubmissionStatus(submissionId, 'promoted', card.stackId, card);
+      await loadInsightsData();
+      setEditingSubmission(null);
       notifyOk(
         isDe ? 'Frage dauerhaft in Stapel aufgenommen.' : 'Question promoted to permanent deck.',
       );
@@ -903,7 +1078,9 @@ export const AdminPage: React.FC = () => {
     setBusyAction(true);
     try {
       await updateSubmissionStatus(id, 'dismissed');
-      await loadAdminData();
+      setSubmissions((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, status: 'dismissed' } : item)),
+      );
     } catch (err) {
       notifyErr(err);
     } finally {
@@ -916,7 +1093,7 @@ export const AdminPage: React.FC = () => {
     setBusyAction(true);
     try {
       const res = await reseedMissingCards();
-      await Promise.all([loadAdminData(), refreshCatalog()]);
+      await loadInsightsData();
       const updated = res.updatedCount ?? 0;
       notifyOk(
         isDe
@@ -1858,173 +2035,191 @@ export const AdminPage: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                    {filteredCards.map((card) => {
-                      const stack = getStackMetaSafe(stackMap, card.stackId);
-                      const score = ratingSummary[card.id];
-                      const awaitingConfirm = confirmDeleteCardId === card.id;
-                      const primaryText = isDe ? card.de : card.en;
-                      const secondaryText = isDe ? card.en : card.de;
-                      return (
-                        <div
-                          key={card.id}
-                          onClick={() => setEditingCard({ ...card })}
-                          className="px-4 py-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3 cursor-pointer hover:bg-[var(--subtle)] transition-colors"
-                          style={{
-                            borderColor: 'var(--border)',
-                            opacity: card.archived ? 0.65 : 1,
-                          }}
-                        >
-                          <div className="min-w-0 flex-1 space-y-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-medium line-clamp-1">
-                                {primaryText}
-                              </span>
-                              <span
-                                className="px-2 py-0.5 rounded-md text-[11px] font-medium"
-                                style={{
-                                  backgroundColor: 'var(--subtle)',
-                                  color: 'var(--ink-muted)',
-                                  border: '1px solid var(--border)',
-                                }}
-                              >
-                                {isDe ? stack.nameDe : stack.nameEn}
-                              </span>
-                              <span
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium"
-                                style={{
-                                  backgroundColor: card.archived
-                                    ? 'var(--elevated)'
-                                    : 'var(--accent-soft)',
-                                  color: card.archived ? 'var(--ink-muted)' : 'var(--accent)',
-                                }}
-                              >
+                  <>
+                    <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                      {visibleCards.map((card) => {
+                        const stack = getStackMetaSafe(stackMap, card.stackId);
+                        const score = ratingSummary[card.id];
+                        const awaitingConfirm = confirmDeleteCardId === card.id;
+                        const primaryText = isDe ? card.de : card.en;
+                        const secondaryText = isDe ? card.en : card.de;
+                        return (
+                          <div
+                            key={card.id}
+                            onClick={() => openCardEditor(card)}
+                            className="px-4 py-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3 cursor-pointer hover:bg-[var(--subtle)] transition-colors"
+                            style={{
+                              borderColor: 'var(--border)',
+                              opacity: card.archived ? 0.65 : 1,
+                            }}
+                          >
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-medium line-clamp-1">
+                                  {primaryText}
+                                </span>
                                 <span
-                                  className="w-1.5 h-1.5 rounded-full"
-                                  style={{
-                                    backgroundColor: card.archived
-                                      ? 'var(--ink-soft)'
-                                      : 'var(--accent)',
-                                  }}
-                                />
-                                {card.archived ? (isDe ? 'Archiv' : 'Archived') : 'Live'}
-                              </span>
-                              {score && (
-                                <span
-                                  className="px-2 py-0.5 rounded-md text-[11px] tabular-nums"
+                                  className="px-2 py-0.5 rounded-md text-[11px] font-medium"
                                   style={{
                                     backgroundColor: 'var(--subtle)',
                                     color: 'var(--ink-muted)',
+                                    border: '1px solid var(--border)',
                                   }}
                                 >
-                                  +{score.up} / -{score.down}
+                                  {isDe ? stack.nameDe : stack.nameEn}
                                 </span>
-                              )}
+                                <span
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium"
+                                  style={{
+                                    backgroundColor: card.archived
+                                      ? 'var(--elevated)'
+                                      : 'var(--accent-soft)',
+                                    color: card.archived ? 'var(--ink-muted)' : 'var(--accent)',
+                                  }}
+                                >
+                                  <span
+                                    className="w-1.5 h-1.5 rounded-full"
+                                    style={{
+                                      backgroundColor: card.archived
+                                        ? 'var(--ink-soft)'
+                                        : 'var(--accent)',
+                                    }}
+                                  />
+                                  {card.archived ? (isDe ? 'Archiv' : 'Archived') : 'Live'}
+                                </span>
+                                {score && (
+                                  <span
+                                    className="px-2 py-0.5 rounded-md text-[11px] tabular-nums"
+                                    style={{
+                                      backgroundColor: 'var(--subtle)',
+                                      color: 'var(--ink-muted)',
+                                    }}
+                                  >
+                                    +{score.up} / -{score.down}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div
+                                className="text-xs truncate"
+                                style={{ color: 'var(--ink-muted)' }}
+                              >
+                                {card.kind}
+                                {card.author ? ` · ${card.author}` : ''} · {secondaryText}
+                              </div>
                             </div>
 
                             <div
-                              className="text-xs truncate"
-                              style={{ color: 'var(--ink-muted)' }}
+                              className="flex flex-wrap items-center gap-2 shrink-0"
+                              onClick={(e) => e.stopPropagation()}
                             >
-                              {card.kind}
-                              {card.author ? ` · ${card.author}` : ''} · {secondaryText}
-                            </div>
-                          </div>
+                              <span
+                                className="hidden md:inline text-[11px] font-mono"
+                                style={{ color: 'var(--ink-soft)' }}
+                              >
+                                {card.id}
+                              </span>
 
-                          <div
-                            className="flex flex-wrap items-center gap-2 shrink-0"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <span
-                              className="hidden md:inline text-[11px] font-mono"
-                              style={{ color: 'var(--ink-soft)' }}
-                            >
-                              {card.id}
-                            </span>
-
-                            <select
-                              value={card.stackId}
-                              disabled={busyAction}
-                              onChange={(e) => handleMoveCardStack(card, e.target.value)}
-                              aria-label={`Move ${card.id} to stack`}
-                              className="hidden xl:block h-7 rounded-lg px-2 text-[11px] cursor-pointer"
-                              style={{
-                                backgroundColor: 'var(--subtle)',
-                                color: 'var(--ink-muted)',
-                                border: '1px solid var(--border)',
-                              }}
-                            >
-                              {adminStacks.map((s) => (
-                                <option key={s.id} value={s.id}>
-                                  {isDe ? s.nameDe : s.nameEn}
-                                </option>
-                              ))}
-                            </select>
-
-                            <button
-                              type="button"
-                              onClick={() => handleArchiveToggle(card)}
-                              disabled={busyAction}
-                              className="px-2.5 py-1 rounded-lg text-[11px] font-medium cursor-pointer hover:bg-[var(--elevated)]"
-                              style={{ color: 'var(--ink-muted)' }}
-                            >
-                              {card.archived
-                                ? isDe
-                                  ? 'Aktivieren'
-                                  : 'Restore'
-                                : isDe
-                                  ? 'Archiv'
-                                  : 'Archive'}
-                            </button>
-
-                            {awaitingConfirm ? (
-                              <div className="inline-flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteCard(card.id)}
-                                  disabled={busyAction}
-                                  className="px-2 py-1 rounded-lg text-[11px] font-medium cursor-pointer"
-                                  style={{
-                                    backgroundColor: 'var(--danger-soft)',
-                                    color: 'var(--danger)',
-                                  }}
-                                >
-                                  {isDe ? 'Löschen?' : 'Confirm?'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmDeleteCardId(null)}
-                                  className="px-2 py-1 rounded-lg text-[11px] cursor-pointer"
-                                  style={{ color: 'var(--ink-muted)' }}
-                                >
-                                  {isDe ? 'Nein' : 'No'}
-                                </button>
-                              </div>
-                            ) : (
                               <button
                                 type="button"
-                                onClick={() => setConfirmDeleteCardId(card.id)}
-                                className="px-2 py-1 rounded-lg text-[11px] font-medium cursor-pointer hover:opacity-80"
-                                style={{ color: 'var(--danger)' }}
+                                onClick={() => handleArchiveToggle(card)}
+                                disabled={busyAction}
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                                style={{ color: 'var(--ink-muted)' }}
                               >
-                                {isDe ? 'Löschen' : 'Delete'}
+                                {card.archived
+                                  ? isDe
+                                    ? 'Aktivieren'
+                                    : 'Restore'
+                                  : isDe
+                                    ? 'Archiv'
+                                    : 'Archive'}
                               </button>
-                            )}
 
-                            <button
-                              type="button"
-                              onClick={() => setEditingCard({ ...card })}
-                              aria-label={`Edit ${card.id}`}
-                              className="p-1 rounded-lg cursor-pointer hover:bg-[var(--elevated)]"
-                              style={{ color: 'var(--ink-soft)' }}
-                            >
-                              <ChevronRight size={14} />
-                            </button>
+                              {awaitingConfirm ? (
+                                <div className="inline-flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteCard(card.id)}
+                                    disabled={busyAction}
+                                    className="px-2 py-1 rounded-lg text-[11px] font-medium cursor-pointer"
+                                    style={{
+                                      backgroundColor: 'var(--danger-soft)',
+                                      color: 'var(--danger)',
+                                    }}
+                                  >
+                                    {isDe ? 'Löschen?' : 'Confirm?'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteCardId(null)}
+                                    className="px-2 py-1 rounded-lg text-[11px] cursor-pointer"
+                                    style={{ color: 'var(--ink-muted)' }}
+                                  >
+                                    {isDe ? 'Nein' : 'No'}
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteCardId(card.id)}
+                                  className="px-2 py-1 rounded-lg text-[11px] font-medium cursor-pointer hover:opacity-80"
+                                  style={{ color: 'var(--danger)' }}
+                                >
+                                  {isDe ? 'Löschen' : 'Delete'}
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => openCardEditor(card)}
+                                aria-label={`Edit ${card.id}`}
+                                className="p-1 rounded-lg cursor-pointer hover:bg-[var(--elevated)]"
+                                style={{ color: 'var(--ink-soft)' }}
+                              >
+                                <ChevronRight size={14} />
+                              </button>
+                            </div>
                           </div>
+                        );
+                      })}
+                    </div>
+
+                    {filteredCards.length > visibleCards.length && (
+                      <div
+                        className="px-4 py-3 border-t flex flex-wrap items-center justify-between gap-2 text-xs"
+                        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--subtle)' }}
+                      >
+                        <span style={{ color: 'var(--ink-muted)' }}>
+                          {isDe
+                            ? `Zeige ${visibleCards.length} von ${filteredCards.length} Karten`
+                            : `Showing ${visibleCards.length} of ${filteredCards.length} cards`}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setCardsVisibleCount((c) => c + 50)}
+                            className="px-3 py-1.5 rounded-lg border font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                            style={{
+                              borderColor: 'var(--border)',
+                              backgroundColor: 'var(--card)',
+                              color: 'var(--ink)',
+                            }}
+                          >
+                            {isDe ? '50 mehr laden' : 'Load 50 more'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCardsVisibleCount(filteredCards.length)}
+                            className="px-3 py-1.5 rounded-lg font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                            style={{ color: 'var(--ink-muted)' }}
+                          >
+                            {isDe ? 'Alle anzeigen' : 'Show all'}
+                          </button>
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </section>
@@ -2516,7 +2711,11 @@ export const AdminPage: React.FC = () => {
                 </div>
 
                 {/* Review Rows */}
-                {reviewSubTab === 'edits' ? (
+                {reviewLoading && !reviewSummary ? (
+                  <div className="py-12 px-4 text-center text-xs" style={{ color: 'var(--ink-muted)' }}>
+                    {isDe ? 'Lade Freunde-Bewertungen…' : 'Loading friend review summary…'}
+                  </div>
+                ) : reviewSubTab === 'edits' ? (
                   visiblePendingEdits.length === 0 ? (
                     <div className="py-12 px-4 text-center space-y-1">
                       <div className="text-sm font-medium">
@@ -2532,10 +2731,28 @@ export const AdminPage: React.FC = () => {
                     <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
                       {visiblePendingEdits.map(({ stat, edit }) => {
                         const originalText = edit.language === 'de' ? stat.card.de : stat.card.en;
+                        const openEditFromWordingRow = () => {
+                          const prefilled: CardItem = {
+                            ...stat.card,
+                            [edit.language]: edit.suggestedText,
+                          };
+                          const pending = stat.edits.filter((e) => !e.dismissed);
+                          if (stat.source === 'suggestion' && !stat.promoted) {
+                            setEditingSuggestion({
+                              card: prefilled,
+                              pendingEdits: pending,
+                              dismissEditId: edit.id,
+                            });
+                          } else {
+                            openCardEditor(prefilled, pending, edit.id);
+                          }
+                        };
+
                         return (
                           <div
                             key={edit.id}
-                            className="p-4 space-y-2 hover:bg-[var(--subtle)] transition-colors"
+                            onClick={openEditFromWordingRow}
+                            className="p-4 space-y-2 cursor-pointer hover:bg-[var(--subtle)] transition-colors"
                             style={{ borderColor: 'var(--border)' }}
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
@@ -2543,7 +2760,23 @@ export const AdminPage: React.FC = () => {
                                 <span className="font-mono">{stat.cardId}</span> ·{' '}
                                 {edit.language.toUpperCase()} · {edit.reviewerName || 'Friend'}
                               </span>
-                              <div className="flex items-center gap-2">
+                              <div
+                                className="flex items-center gap-2"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  disabled={busyAction}
+                                  onClick={openEditFromWordingRow}
+                                  className="px-2.5 py-1 rounded-lg border text-[11px] font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                                  style={{
+                                    borderColor: 'var(--border)',
+                                    backgroundColor: 'var(--subtle)',
+                                    color: 'var(--ink)',
+                                  }}
+                                >
+                                  {isDe ? 'Bearbeiten' : 'Edit'}
+                                </button>
                                 <button
                                   type="button"
                                   disabled={busyAction}
@@ -2606,20 +2839,38 @@ export const AdminPage: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                    {filteredReviewStats.map((stat) => {
+                  <>
+                    <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                      {visibleReviewStats.map((stat) => {
                       const stackMeta = getStackMetaSafe(stackMap, stat.card.stackId);
                       const isRec = recommendedReviewIds.has(stat.cardId);
                       const isSelected = selectedReviewIds.has(stat.cardId);
+                      const isEditedDraft =
+                        reviewSubTab === 'suggestion' &&
+                        !stat.promoted &&
+                        Boolean(reviewSummary?.editedSuggestionIds?.includes(stat.cardId));
                       const scoreLabel =
                         stat.weightedScore > 0
                           ? `+${stat.weightedScore}`
                           : String(stat.weightedScore);
 
+                      const openReviewItemEditor = () => {
+                        const pending = stat.edits.filter((e) => !e.dismissed);
+                        if (stat.source === 'suggestion' && !stat.promoted) {
+                          setEditingSuggestion({
+                            card: { ...stat.card },
+                            pendingEdits: pending,
+                          });
+                        } else {
+                          openCardEditor(stat.card, pending);
+                        }
+                      };
+
                       return (
                         <div
                           key={stat.cardId}
-                          className="px-4 py-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 hover:bg-[var(--subtle)] transition-colors"
+                          onClick={openReviewItemEditor}
+                          className="px-4 py-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 cursor-pointer hover:bg-[var(--subtle)] transition-colors"
                           style={{ borderColor: 'var(--border)' }}
                         >
                           <div className="flex items-start gap-3 flex-1 min-w-0">
@@ -2627,6 +2878,7 @@ export const AdminPage: React.FC = () => {
                               <input
                                 type="checkbox"
                                 checked={isSelected}
+                                onClick={(e) => e.stopPropagation()}
                                 onChange={() => handleToggleSelectReviewCard(stat.cardId)}
                                 aria-label={`Select ${stat.cardId}`}
                                 className="mt-1 shrink-0 cursor-pointer"
@@ -2654,6 +2906,18 @@ export const AdminPage: React.FC = () => {
                                     }}
                                   >
                                     {isDe ? 'Top-Auswahl' : 'Recommended'}
+                                  </span>
+                                )}
+                                {isEditedDraft && (
+                                  <span
+                                    className="px-2 py-0.5 rounded-full font-medium"
+                                    style={{
+                                      backgroundColor: 'var(--elevated)',
+                                      color: 'var(--ink)',
+                                      border: '1px solid var(--border-strong)',
+                                    }}
+                                  >
+                                    {isDe ? 'Entwurf bearbeitet' : 'Edited'}
                                   </span>
                                 )}
                                 <span
@@ -2691,7 +2955,10 @@ export const AdminPage: React.FC = () => {
                             </div>
                           </div>
 
-                          <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <div
+                            className="flex flex-wrap items-center gap-2 shrink-0"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             {stat.voteCount > 0 ? (
                               <div className="flex flex-col sm:items-end gap-0.5">
                                 <span
@@ -2734,10 +3001,40 @@ export const AdminPage: React.FC = () => {
                             )}
 
                             {reviewSubTab === 'suggestion' && !stat.promoted && (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={busyAction}
+                                  onClick={openReviewItemEditor}
+                                  className="px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer disabled:opacity-50 hover:bg-[var(--elevated)]"
+                                  style={{
+                                    backgroundColor: 'var(--subtle)',
+                                    borderColor: 'var(--border)',
+                                    color: 'var(--ink)',
+                                  }}
+                                >
+                                  {isDe ? 'Bearbeiten' : 'Edit'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busyAction}
+                                  onClick={() => handlePromoteReviewIds([stat.cardId])}
+                                  className="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer disabled:opacity-50"
+                                  style={{
+                                    backgroundColor: 'var(--accent)',
+                                    color: 'var(--accent-ink)',
+                                  }}
+                                >
+                                  {isDe ? '+ Aufnehmen' : '+ Add to Live'}
+                                </button>
+                              </>
+                            )}
+
+                            {reviewSubTab === 'suggestion' && stat.promoted && (
                               <button
                                 type="button"
                                 disabled={busyAction}
-                                onClick={() => handlePromoteReviewIds([stat.cardId])}
+                                onClick={openReviewItemEditor}
                                 className="px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer disabled:opacity-50 hover:bg-[var(--elevated)]"
                                 style={{
                                   backgroundColor: 'var(--subtle)',
@@ -2745,32 +3042,83 @@ export const AdminPage: React.FC = () => {
                                   color: 'var(--ink)',
                                 }}
                               >
-                                {isDe ? '+ Aufnehmen' : '+ Add to Live'}
+                                {isDe ? 'Bearbeiten' : 'Edit'}
                               </button>
                             )}
 
                             {reviewSubTab === 'live' && (
-                              <button
-                                type="button"
-                                disabled={busyAction}
-                                onClick={() => handleArchiveToggle(stat.card)}
-                                className="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
-                                style={{ color: 'var(--ink-muted)' }}
-                              >
-                                {stat.card.archived
-                                  ? isDe
-                                    ? 'Aktivieren'
-                                    : 'Restore'
-                                  : isDe
-                                    ? 'Archivieren'
-                                    : 'Archive'}
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={busyAction}
+                                  onClick={openReviewItemEditor}
+                                  className="px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer disabled:opacity-50 hover:bg-[var(--elevated)]"
+                                  style={{
+                                    backgroundColor: 'var(--subtle)',
+                                    borderColor: 'var(--border)',
+                                    color: 'var(--ink)',
+                                  }}
+                                >
+                                  {isDe ? 'Bearbeiten' : 'Edit'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busyAction}
+                                  onClick={() => handleArchiveToggle(stat.card)}
+                                  className="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                                  style={{ color: 'var(--ink-muted)' }}
+                                >
+                                  {stat.card.archived
+                                    ? isDe
+                                      ? 'Aktivieren'
+                                      : 'Restore'
+                                    : isDe
+                                      ? 'Archivieren'
+                                      : 'Archive'}
+                                </button>
+                              </>
                             )}
                           </div>
                         </div>
                       );
                     })}
-                  </div>
+                    </div>
+
+                    {filteredReviewStats.length > visibleReviewStats.length && (
+                      <div
+                        className="px-4 py-3 border-t flex flex-wrap items-center justify-between gap-2 text-xs"
+                        style={{ borderColor: 'var(--border)', backgroundColor: 'var(--subtle)' }}
+                      >
+                        <span style={{ color: 'var(--ink-muted)' }}>
+                          {isDe
+                            ? `Zeige ${visibleReviewStats.length} von ${filteredReviewStats.length} Einträgen`
+                            : `Showing ${visibleReviewStats.length} of ${filteredReviewStats.length} items`}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setReviewVisibleCount((c) => c + 50)}
+                            className="px-3 py-1.5 rounded-lg border font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                            style={{
+                              borderColor: 'var(--border)',
+                              backgroundColor: 'var(--card)',
+                              color: 'var(--ink)',
+                            }}
+                          >
+                            {isDe ? '50 mehr laden' : 'Load 50 more'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setReviewVisibleCount(filteredReviewStats.length)}
+                            className="px-3 py-1.5 rounded-lg font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                            style={{ color: 'var(--ink-muted)' }}
+                          >
+                            {isDe ? 'Alle anzeigen' : 'Show all'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </section>
@@ -2878,7 +3226,8 @@ export const AdminPage: React.FC = () => {
                     {filteredInbox.map((sub) => (
                       <div
                         key={sub.id}
-                        className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[var(--subtle)] transition-colors"
+                        onClick={() => setEditingSubmission(sub)}
+                        className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-[var(--subtle)] transition-colors"
                         style={{ borderColor: 'var(--border)' }}
                       >
                         <div className="space-y-1 min-w-0">
@@ -2889,59 +3238,71 @@ export const AdminPage: React.FC = () => {
                           <p className="text-sm m-0">{sub.text}</p>
                         </div>
 
-                        {sub.status === 'pending' ? (
-                          <div className="flex items-center gap-2 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setPromoting({
-                                  sub,
-                                  stackId: firstStackId,
-                                  de: sub.text,
-                                  en: sub.text,
-                                })
-                              }
-                              className="px-3.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer"
-                              style={{
-                                backgroundColor: 'var(--accent)',
-                                color: 'var(--accent-ink)',
-                              }}
-                            >
-                              {isDe ? 'In Stapel übernehmen' : 'Promote to deck'}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={busyAction}
-                              onClick={() => handleDismissSubmission(sub.id)}
-                              className="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
-                              style={{ color: 'var(--ink-muted)' }}
-                            >
-                              {isDe ? 'Verwerfen' : 'Dismiss'}
-                            </button>
-                          </div>
-                        ) : (
-                          <span
-                            className="px-2.5 py-1 rounded-full text-[11px] font-medium shrink-0 self-start sm:self-center"
+                        <div
+                          className="flex flex-wrap items-center gap-2 shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            disabled={busyAction}
+                            onClick={() => setEditingSubmission(sub)}
+                            className="px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
                             style={{
-                              backgroundColor:
-                                sub.status === 'promoted'
-                                  ? 'var(--accent-soft)'
-                                  : 'var(--elevated)',
-                              color:
-                                sub.status === 'promoted'
-                                  ? 'var(--accent)'
-                                  : 'var(--ink-muted)',
+                              borderColor: 'var(--border)',
+                              backgroundColor: 'var(--subtle)',
+                              color: 'var(--ink)',
                             }}
                           >
-                            {sub.status === 'promoted'
-                              ? isDe
-                                ? 'Übernommen'
-                                : 'Promoted'
-                              : isDe
-                                ? 'Verworfen'
-                                : 'Dismissed'}
-                          </span>
-                        )}
+                            {isDe ? 'Bearbeiten' : 'Edit'}
+                          </button>
+
+                          {sub.status === 'pending' ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setEditingSubmission(sub)}
+                                className="px-3.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer"
+                                style={{
+                                  backgroundColor: 'var(--accent)',
+                                  color: 'var(--accent-ink)',
+                                }}
+                              >
+                                {isDe ? 'In Stapel übernehmen' : 'Promote to deck'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busyAction}
+                                onClick={() => handleDismissSubmission(sub.id)}
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                                style={{ color: 'var(--ink-muted)' }}
+                              >
+                                {isDe ? 'Verwerfen' : 'Dismiss'}
+                              </button>
+                            </>
+                          ) : (
+                            <span
+                              className="px-2.5 py-1 rounded-full text-[11px] font-medium"
+                              style={{
+                                backgroundColor:
+                                  sub.status === 'promoted'
+                                    ? 'var(--accent-soft)'
+                                    : 'var(--elevated)',
+                                color:
+                                  sub.status === 'promoted'
+                                    ? 'var(--accent)'
+                                    : 'var(--ink-muted)',
+                              }}
+                            >
+                              {sub.status === 'promoted'
+                                ? isDe
+                                  ? 'Übernommen'
+                                  : 'Promoted'
+                                : isDe
+                                  ? 'Verworfen'
+                                  : 'Dismissed'}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -3227,263 +3588,33 @@ export const AdminPage: React.FC = () => {
 
       {/* MODAL: Edit / Create Card */}
       {editingCard && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ backgroundColor: 'var(--scrim)' }}
-          onClick={() => setEditingCard(null)}
-        >
-          <form
-            onSubmit={handleSaveCard}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg rounded-2xl border p-6 space-y-3.5 max-h-[90vh] overflow-y-auto"
-            style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border-strong)' }}
-          >
-            <h2 className="font-serif-card text-xl font-medium m-0">
-              {isDe ? 'Karte bearbeiten' : 'Edit Card'}
-            </h2>
+        <CardEditorModal
+          key={editingCard.card.id}
+          card={editingCard.card}
+          pendingEdits={editingCard.pendingEdits}
+          initialDismissEditId={editingCard.dismissEditId}
+          stacks={adminStacks}
+          isDe={isDe}
+          busy={busyAction}
+          onSave={handleSaveCard}
+          onClose={() => setEditingCard(null)}
+        />
+      )}
 
-            <div className="grid grid-cols-2 gap-2">
-              <select
-                value={editingCard.stackId}
-                onChange={(e) => {
-                  const sid = e.target.value;
-                  setEditingCard({
-                    ...editingCard,
-                    stackId: sid,
-                    kind:
-                      editingCard.kind === 'wildcard'
-                        ? 'wildcard'
-                        : sid === 'quotes'
-                          ? 'quote'
-                          : 'question',
-                  });
-                }}
-                className="rounded-lg px-3 py-2 text-xs"
-                style={{
-                  backgroundColor: 'var(--subtle)',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--border)',
-                }}
-              >
-                {adminStacks.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {isDe ? s.nameDe : s.nameEn}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={editingCard.kind}
-                onChange={(e) =>
-                  setEditingCard({ ...editingCard, kind: e.target.value as CardKind })
-                }
-                className="rounded-lg px-3 py-2 text-xs"
-                style={{
-                  backgroundColor: 'var(--subtle)',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--border)',
-                }}
-              >
-                <option value="question">{isDe ? 'Frage' : 'Question'}</option>
-                <option value="quote">{isDe ? 'Zitat' : 'Quote'}</option>
-                <option value="wildcard">{isDe ? 'Impuls / Wildcard' : 'Wildcard / Moment'}</option>
-              </select>
-            </div>
-
-            {editingCard.kind === 'quote' && (
-              <div className="grid grid-cols-2 gap-2">
-                <select
-                  value={editingCard.quoteSubdeck || 'general'}
-                  onChange={(e) =>
-                    setEditingCard({
-                      ...editingCard,
-                      quoteSubdeck: e.target.value as QuoteSubdeck,
-                    })
-                  }
-                  className="rounded-lg px-3 py-2 text-xs"
-                  style={{
-                    backgroundColor: 'var(--subtle)',
-                    color: 'var(--ink)',
-                    border: '1px solid var(--border)',
-                  }}
-                >
-                  <option value="general">General</option>
-                  <option value="ruhi">Ruhi Book 1</option>
-                </select>
-
-                {editingCard.quoteSubdeck === 'ruhi' && (
-                  <select
-                    value={editingCard.ruhiChapter || 1}
-                    onChange={(e) =>
-                      setEditingCard({
-                        ...editingCard,
-                        ruhiChapter: Number(e.target.value) as RuhiChapter,
-                      })
-                    }
-                    className="rounded-lg px-3 py-2 text-xs"
-                    style={{
-                      backgroundColor: 'var(--subtle)',
-                      color: 'var(--ink)',
-                      border: '1px solid var(--border)',
-                    }}
-                  >
-                    <option value={1}>Chapter 1</option>
-                    <option value={2}>Chapter 2</option>
-                    <option value={3}>Chapter 3</option>
-                  </select>
-                )}
-              </div>
-            )}
-
-            <textarea
-              required
-              rows={3}
-              value={editingCard.de}
-              onChange={(e) => setEditingCard({ ...editingCard, de: e.target.value })}
-              placeholder="Deutsch (DE)"
-              className="w-full rounded-xl p-3 text-sm"
-              style={{
-                backgroundColor: 'var(--subtle)',
-                color: 'var(--ink)',
-                border: '1px solid var(--border)',
-              }}
-            />
-            <textarea
-              required
-              rows={3}
-              value={editingCard.en}
-              onChange={(e) => setEditingCard({ ...editingCard, en: e.target.value })}
-              placeholder="English (EN)"
-              className="w-full rounded-xl p-3 text-sm"
-              style={{
-                backgroundColor: 'var(--subtle)',
-                color: 'var(--ink)',
-                border: '1px solid var(--border)',
-              }}
-            />
-
-            {editingCard.kind === 'quote' ? (
-              <>
-                <input
-                  type="text"
-                  value={editingCard.author || ''}
-                  onChange={(e) => setEditingCard({ ...editingCard, author: e.target.value })}
-                  placeholder="Author"
-                  className="w-full rounded-lg px-3 py-2 text-xs"
-                  style={{
-                    backgroundColor: 'var(--subtle)',
-                    color: 'var(--ink)',
-                    border: '1px solid var(--border)',
-                  }}
-                />
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="url"
-                    value={editingCard.sourceUrlDe || ''}
-                    onChange={(e) =>
-                      setEditingCard({ ...editingCard, sourceUrlDe: e.target.value })
-                    }
-                    placeholder="Source URL (DE)"
-                    className="rounded-lg px-3 py-2 text-xs"
-                    style={{
-                      backgroundColor: 'var(--subtle)',
-                      color: 'var(--ink)',
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                  <input
-                    type="url"
-                    value={editingCard.sourceUrlEn || ''}
-                    onChange={(e) =>
-                      setEditingCard({ ...editingCard, sourceUrlEn: e.target.value })
-                    }
-                    placeholder="Source URL (EN)"
-                    className="rounded-lg px-3 py-2 text-xs"
-                    style={{
-                      backgroundColor: 'var(--subtle)',
-                      color: 'var(--ink)',
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-                <input
-                  type="text"
-                  value={editingCard.promptDe || ''}
-                  onChange={(e) => setEditingCard({ ...editingCard, promptDe: e.target.value })}
-                  placeholder="Gesprächsimpuls (DE)"
-                  className="w-full rounded-lg px-3 py-2 text-xs"
-                  style={{
-                    backgroundColor: 'var(--subtle)',
-                    color: 'var(--ink)',
-                    border: '1px solid var(--border)',
-                  }}
-                />
-                <input
-                  type="text"
-                  value={editingCard.promptEn || ''}
-                  onChange={(e) => setEditingCard({ ...editingCard, promptEn: e.target.value })}
-                  placeholder="Conversation question (EN)"
-                  className="w-full rounded-lg px-3 py-2 text-xs"
-                  style={{
-                    backgroundColor: 'var(--subtle)',
-                    color: 'var(--ink)',
-                    border: '1px solid var(--border)',
-                  }}
-                />
-              </>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  value={editingCard.digDeeperDe || ''}
-                  onChange={(e) =>
-                    setEditingCard({ ...editingCard, digDeeperDe: e.target.value })
-                  }
-                  placeholder={isDe ? 'Optional: Nachfrage (DE)' : 'Optional: Follow-up (DE)'}
-                  className="rounded-lg px-3 py-2 text-xs"
-                  style={{
-                    backgroundColor: 'var(--subtle)',
-                    color: 'var(--ink)',
-                    border: '1px solid var(--border)',
-                  }}
-                />
-                <input
-                  type="text"
-                  value={editingCard.digDeeperEn || ''}
-                  onChange={(e) =>
-                    setEditingCard({ ...editingCard, digDeeperEn: e.target.value })
-                  }
-                  placeholder={isDe ? 'Optional: Nachfrage (EN)' : 'Optional: Follow-up (EN)'}
-                  className="rounded-lg px-3 py-2 text-xs"
-                  style={{
-                    backgroundColor: 'var(--subtle)',
-                    color: 'var(--ink)',
-                    border: '1px solid var(--border)',
-                  }}
-                />
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setEditingCard(null)}
-                className="px-4 py-2 rounded-lg text-xs cursor-pointer"
-                style={{ color: 'var(--ink-muted)' }}
-              >
-                {isDe ? 'Abbrechen' : 'Cancel'}
-              </button>
-              <button
-                type="submit"
-                disabled={busyAction}
-                className="px-5 py-2 rounded-lg text-xs font-medium cursor-pointer disabled:opacity-60"
-                style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
-              >
-                {isDe ? 'Speichern' : 'Save'}
-              </button>
-            </div>
-          </form>
-        </div>
+      {/* MODAL: Edit Suggestion Before Publishing */}
+      {editingSuggestion && (
+        <SuggestionEditorModal
+          key={editingSuggestion.card.id}
+          card={editingSuggestion.card}
+          pendingEdits={editingSuggestion.pendingEdits}
+          initialDismissEditId={editingSuggestion.dismissEditId}
+          stacks={adminStacks}
+          isDe={isDe}
+          busy={busyAction}
+          onSaveDraft={handleSaveSuggestionDraft}
+          onPublish={handlePublishEditedSuggestion}
+          onClose={() => setEditingSuggestion(null)}
+        />
       )}
 
       {/* MODAL: Create / Edit Stack */}
@@ -3781,84 +3912,18 @@ export const AdminPage: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL: Promote Group Submission */}
-      {promoting && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ backgroundColor: 'var(--scrim)' }}
-          onClick={() => setPromoting(null)}
-        >
-          <form
-            onSubmit={handlePromoteSubmit}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg rounded-2xl border p-6 space-y-3.5"
-            style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border-strong)' }}
-          >
-            <h2 className="font-serif-card text-xl font-medium m-0">
-              {isDe ? 'Frage in festen Stapel aufnehmen' : 'Promote to Permanent Deck'}
-            </h2>
-            <select
-              value={promoting.stackId}
-              onChange={(e) => setPromoting({ ...promoting, stackId: e.target.value })}
-              className="w-full rounded-lg px-3 py-2 text-xs"
-              style={{
-                backgroundColor: 'var(--subtle)',
-                color: 'var(--ink)',
-                border: '1px solid var(--border)',
-              }}
-            >
-              {adminStacks.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {isDe ? s.nameDe : s.nameEn}
-                </option>
-              ))}
-            </select>
-            <textarea
-              required
-              rows={2}
-              value={promoting.de}
-              onChange={(e) => setPromoting({ ...promoting, de: e.target.value })}
-              placeholder="Deutsch (DE)"
-              className="w-full rounded-xl p-3 text-sm"
-              style={{
-                backgroundColor: 'var(--subtle)',
-                color: 'var(--ink)',
-                border: '1px solid var(--border)',
-              }}
-            />
-            <textarea
-              required
-              rows={2}
-              value={promoting.en}
-              onChange={(e) => setPromoting({ ...promoting, en: e.target.value })}
-              placeholder="English (EN)"
-              className="w-full rounded-xl p-3 text-sm"
-              style={{
-                backgroundColor: 'var(--subtle)',
-                color: 'var(--ink)',
-                border: '1px solid var(--border)',
-              }}
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPromoting(null)}
-                className="px-4 py-2 rounded-lg text-xs cursor-pointer"
-                style={{ color: 'var(--ink-muted)' }}
-              >
-                {isDe ? 'Abbrechen' : 'Cancel'}
-              </button>
-              <button
-                type="submit"
-                disabled={busyAction}
-                className="px-5 py-2 rounded-lg text-xs font-medium cursor-pointer disabled:opacity-60"
-                style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
-              >
-                {isDe ? 'Übernehmen' : 'Promote'}
-              </button>
-            </div>
-          </form>
-        </div>
+      {/* MODAL: Edit / Promote Group Submission */}
+      {editingSubmission && (
+        <InboxSubmissionModal
+          key={editingSubmission.id}
+          submission={editingSubmission}
+          stacks={adminStacks}
+          isDe={isDe}
+          busy={busyAction}
+          onSaveDraft={handleSaveInboxDraft}
+          onPromote={handlePromoteInboxSubmission}
+          onClose={() => setEditingSubmission(null)}
+        />
       )}
     </div>
   );

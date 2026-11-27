@@ -46,7 +46,9 @@ vi.mock('@vercel/blob', () => {
 
 import { GET as getAdminReview, POST as postAdminReview } from '../admin/review';
 import { DELETE as deleteAdminCard } from '../admin/cards';
+import { POST as postAdminInsights } from '../admin/insights';
 import { GET as getPublicReview, POST as postPublicReview } from '../review';
+import { INBOX_PATH, roomBlobPath } from '../_lib/store';
 
 const TEST_SECRET = 'test-admin-secret-at-least-32-chars-long';
 const ORIGIN = 'https://resonance.example';
@@ -326,5 +328,184 @@ describe('review backend endpoints', () => {
       promotedIds: string[];
     };
     expect(stateAfterDelete.promotedIds).not.toContain(sample.id);
+  });
+
+  it('POST /api/admin/review save-suggestion-draft stores draft edits without publishing live until promoted', async () => {
+    const draftTarget = REVIEW_SUGGESTIONS[2];
+    expect(draftTarget).toBeDefined();
+
+    const draftRes = await postAdminReview(
+      makeRequest('/api/admin/review', {
+        method: 'POST',
+        adminEmail: 'curator@example.com',
+        body: {
+          action: 'save-suggestion-draft',
+          card: {
+            ...draftTarget,
+            de: 'Überarbeiteter Entwurf DE?',
+            en: 'Refined draft wording EN?',
+            digDeeperDe: 'Vertiefungsfrage DE?',
+            digDeeperEn: 'Follow-up prompt EN?',
+          },
+        },
+      }),
+    );
+    expect(draftRes.status).toBe(200);
+    const draftData = (await draftRes.json()) as {
+      ok: boolean;
+      card: { id: string; de: string; en: string; digDeeperEn?: string };
+    };
+    expect(draftData.card.de).toBe('Überarbeiteter Entwurf DE?');
+    expect(draftData.card.en).toBe('Refined draft wording EN?');
+    expect(draftData.card.digDeeperEn).toBe('Follow-up prompt EN?');
+
+    // Not in CARDS_PATH yet (only seeded baseline cards exist)
+    const cardsBeforePromote = JSON.parse(blobStore.get(CARDS_PATH) || '[]') as Array<{
+      id: string;
+    }>;
+    expect(cardsBeforePromote.some((c) => c.id === draftTarget.id)).toBe(false);
+
+    // Surfaced in both public GET /api/review and admin GET /api/admin/review
+    const publicRes = await getPublicReview(makeRequest('/api/review?reviewerId=rev_friend_02'));
+    expect(publicRes.status).toBe(200);
+    const publicData = (await publicRes.json()) as {
+      suggestions: Array<{ id: string; de: string; en: string }>;
+    };
+    const publicCard = publicData.suggestions.find((s) => s.id === draftTarget.id);
+    expect(publicCard?.de).toBe('Überarbeiteter Entwurf DE?');
+    expect(publicCard?.en).toBe('Refined draft wording EN?');
+
+    const adminRes = await getAdminReview(
+      makeRequest('/api/admin/review', { adminEmail: 'curator@example.com' }),
+    );
+    expect(adminRes.status).toBe(200);
+    const adminData = (await adminRes.json()) as {
+      editedSuggestionIds: string[];
+      stats: Array<{ cardId: string; card: { en: string }; promoted: boolean }>;
+    };
+    expect(adminData.editedSuggestionIds).toContain(draftTarget.id);
+    const adminStat = adminData.stats.find((s) => s.cardId === draftTarget.id);
+    expect(adminStat?.card.en).toBe('Refined draft wording EN?');
+    expect(adminStat?.promoted).toBe(false);
+
+    // Promote using saved draft + optional dismissEditIds
+    const promoteRes = await postAdminReview(
+      makeRequest('/api/admin/review', {
+        method: 'POST',
+        adminEmail: 'curator@example.com',
+        body: {
+          action: 'promote',
+          items: [{ id: draftTarget.id }],
+          dismissEditIds: [`rev_friend_02::${draftTarget.id}::2026-11-27T12:00:00Z`],
+        },
+      }),
+    );
+    expect(promoteRes.status).toBe(200);
+
+    const liveCards = JSON.parse(blobStore.get(CARDS_PATH) || '[]') as Array<{
+      id: string;
+      de: string;
+      en: string;
+      digDeeperEn?: string;
+    }>;
+    const published = liveCards.find((c) => c.id === draftTarget.id);
+    expect(published?.de).toBe('Überarbeiteter Entwurf DE?');
+    expect(published?.en).toBe('Refined draft wording EN?');
+    expect(published?.digDeeperEn).toBe('Follow-up prompt EN?');
+
+    const finalState = JSON.parse(blobStore.get(REVIEW_STATE_PATH) || '{}') as {
+      suggestionOverrides: Record<string, unknown>;
+      dismissedEditIds: string[];
+    };
+    expect(finalState.suggestionOverrides[draftTarget.id]).toBeUndefined();
+    expect(finalState.dismissedEditIds).toContain(
+      `rev_friend_02::${draftTarget.id}::2026-11-27T12:00:00Z`,
+    );
+  });
+
+  it('POST /api/admin/insights edits inbox submissions in both inbox and room blobs before promoting', async () => {
+    const sub = {
+      id: 'sub_123',
+      roomCode: 'ABCD',
+      text: 'Original guest question?',
+      language: 'en' as const,
+      authorName: 'Sam',
+      status: 'pending' as const,
+      createdAt: '2026-11-27T13:00:00Z',
+    };
+    blobStore.set(INBOX_PATH, JSON.stringify([sub]));
+    blobStore.set(
+      roomBlobPath('ABCD'),
+      JSON.stringify({
+        room: { code: 'ABCD', createdAt: '2026-11-27T12:55:00Z', activeStackIds: ['warmup'] },
+        submissions: [sub],
+      }),
+    );
+
+    const editRes = await postAdminInsights(
+      makeRequest('/api/admin/insights', {
+        method: 'POST',
+        adminEmail: 'curator@example.com',
+        body: {
+          action: 'edit-submission',
+          id: 'sub_123',
+          text: 'Polished guest question?',
+          language: 'en',
+          authorName: 'Samantha',
+          promotedStackId: 'warmup',
+        },
+      }),
+    );
+    expect(editRes.status).toBe(200);
+    const editData = (await editRes.json()) as {
+      ok: boolean;
+      submission: { text: string; authorName?: string; promotedStackId?: string };
+    };
+    expect(editData.submission.text).toBe('Polished guest question?');
+    expect(editData.submission.authorName).toBe('Samantha');
+    expect(editData.submission.promotedStackId).toBe('warmup');
+
+    const updatedInbox = JSON.parse(blobStore.get(INBOX_PATH) || '[]') as Array<{
+      id: string;
+      text: string;
+      authorName?: string;
+      promotedStackId?: string;
+    }>;
+    expect(updatedInbox[0].text).toBe('Polished guest question?');
+    expect(updatedInbox[0].promotedStackId).toBe('warmup');
+
+    const updatedRoom = JSON.parse(blobStore.get(roomBlobPath('ABCD')) || '{}') as {
+      submissions: Array<{
+        id: string;
+        text: string;
+        authorName?: string;
+        promotedStackId?: string;
+      }>;
+    };
+    expect(updatedRoom.submissions[0].text).toBe('Polished guest question?');
+    expect(updatedRoom.submissions[0].authorName).toBe('Samantha');
+    expect(updatedRoom.submissions[0].promotedStackId).toBe('warmup');
+
+    const promoteRes = await postAdminInsights(
+      makeRequest('/api/admin/insights', {
+        method: 'POST',
+        adminEmail: 'curator@example.com',
+        body: {
+          action: 'update-submission',
+          id: 'sub_123',
+          status: 'promoted',
+          promotedStackId: 'warmup',
+          card: {
+            id: 'C_SUB_123',
+            stackId: 'warmup',
+            kind: 'question',
+            de: 'Polierte Gästefrage?',
+            en: 'Polished guest question?',
+            isCustom: true,
+          },
+        },
+      }),
+    );
+    expect(promoteRes.status).toBe(200);
   });
 });
