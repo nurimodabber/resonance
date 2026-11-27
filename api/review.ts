@@ -1,6 +1,6 @@
 import { REVIEW_SUGGESTIONS } from '../src/data/reviewSuggestions.js';
 import type { Language, ReviewerRecord, ReviewVote } from '../src/types/deck';
-import { jsonResponse } from './_lib/auth.js';
+import { jsonResponse, verifySameOrigin } from './_lib/auth.js';
 import {
   getCardsOrSeed,
   getReviewState,
@@ -13,6 +13,17 @@ import {
 
 function isValidReviewerId(id: unknown): id is string {
   return typeof id === 'string' && /^[a-zA-Z0-9_-]{8,64}$/.test(id.trim());
+}
+
+function isValidCardId(id: unknown): id is string {
+  if (typeof id !== 'string') return false;
+  const trimmed = id.trim();
+  return (
+    /^[a-zA-Z0-9_-]{2,80}$/.test(trimmed) &&
+    trimmed !== '__proto__' &&
+    trimmed !== 'constructor' &&
+    trimmed !== 'prototype'
+  );
 }
 
 function cleanReviewerName(name: unknown): string | undefined {
@@ -51,7 +62,9 @@ export async function GET(request: Request): Promise<Response> {
     const liveIds = new Set(visibleLiveCards.map((c) => c.id));
     const promotedSet = new Set([...reviewState.promotedIds, ...liveIds]);
 
-    const visibleSuggestions = REVIEW_SUGGESTIONS.filter((s) => !promotedSet.has(s.id));
+    const visibleSuggestions = REVIEW_SUGGESTIONS.filter(
+      (s) => !promotedSet.has(s.id) && (s.kind === 'wildcard' || activeStackIds.has(s.stackId)),
+    );
 
     return jsonResponse({
       mode: 'vercel',
@@ -76,6 +89,9 @@ export async function POST(request: Request): Promise<Response> {
   if (!isBlobConfigured()) {
     return jsonResponse({ error: 'Vercel Blob storage is not configured.' }, 503);
   }
+  if (!verifySameOrigin(request)) {
+    return jsonResponse({ error: 'Cross-origin request rejected.' }, 403);
+  }
 
   try {
     const body = (await request.json()) as Record<string, unknown>;
@@ -85,6 +101,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const action = typeof body.action === 'string' ? body.action : '';
+    const hasReviewerName = typeof body.reviewerName === 'string';
     const reviewerName = cleanReviewerName(body.reviewerName);
     const blobPath = reviewerBlobPath(rawReviewerId);
     const now = new Date().toISOString();
@@ -93,7 +110,7 @@ export async function POST(request: Request): Promise<Response> {
     const record: ReviewerRecord = existing
       ? {
           reviewerId: rawReviewerId,
-          reviewerName: reviewerName ?? existing.reviewerName,
+          reviewerName: hasReviewerName ? reviewerName : existing.reviewerName,
           updatedAt: now,
           votes: { ...(existing.votes || {}) },
           edits: { ...(existing.edits || {}) },
@@ -109,13 +126,14 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'profile') {
       record.reviewerName = reviewerName;
       await writeJsonBlob(blobPath, record);
-      return jsonResponse({ ok: true, updatedAt: now });
+      return jsonResponse({ ok: true, updatedAt: now, myRecord: record });
     }
 
-    const cardId = typeof body.cardId === 'string' ? body.cardId.trim() : '';
-    if (!cardId || cardId.length > 80) {
+    const rawCardId = typeof body.cardId === 'string' ? body.cardId.trim() : '';
+    if (!isValidCardId(rawCardId)) {
       return jsonResponse({ error: 'Invalid card ID.' }, 400);
     }
+    const cardId = rawCardId;
 
     if (action === 'vote') {
       const v = body.vote;
@@ -130,7 +148,7 @@ export async function POST(request: Request): Promise<Response> {
       }
 
       await writeJsonBlob(blobPath, record);
-      return jsonResponse({ ok: true, updatedAt: now });
+      return jsonResponse({ ok: true, updatedAt: now, myRecord: record });
     }
 
     if (action === 'suggest-edit') {
@@ -152,7 +170,7 @@ export async function POST(request: Request): Promise<Response> {
       }
 
       await writeJsonBlob(blobPath, record);
-      return jsonResponse({ ok: true, updatedAt: now });
+      return jsonResponse({ ok: true, updatedAt: now, myRecord: record });
     }
 
     return jsonResponse({ error: 'Unsupported review action.' }, 400);

@@ -37,6 +37,10 @@ export const IslandNav: React.FC = () => {
   const isReview = route.startsWith('/review');
   const isDe = lang === 'de';
 
+  if (isAdmin) {
+    return null;
+  }
+
   const navRoutes = [
     {
       path: '/',

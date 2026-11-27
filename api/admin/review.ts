@@ -25,16 +25,19 @@ export async function GET(request: Request): Promise<Response> {
     ]);
 
     const sortedStacks = stacks.slice().sort((a, b) => a.ring - b.ring);
+    const activeReviewers = reviewers.filter(
+      (r) => Object.keys(r.votes || {}).length > 0 || Object.keys(r.edits || {}).length > 0,
+    );
     const stats = aggregateReviewStats({
       suggestions: REVIEW_SUGGESTIONS,
       liveCards: cards,
-      reviewers,
+      reviewers: activeReviewers,
       promotedIds: reviewState.promotedIds,
       dismissedEditIds: reviewState.dismissedEditIds,
       preset: 'auto',
     });
 
-    const reviewerSummaries = reviewers
+    const reviewerSummaries = activeReviewers
       .map((r) => ({
         reviewerId: r.reviewerId,
         reviewerName: r.reviewerName,
@@ -45,7 +48,7 @@ export async function GET(request: Request): Promise<Response> {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
     return jsonResponse({
-      reviewerCount: reviewers.length,
+      reviewerCount: activeReviewers.length,
       reviewers: reviewerSummaries,
       stacks: sortedStacks,
       stats,
@@ -73,6 +76,13 @@ export async function POST(request: Request): Promise<Response> {
     ]);
 
     const validStackIds = new Set(stacks.map((s) => s.id));
+    const fallbackStackId = stacks.find((s) => !s.archived)?.id ?? stacks[0]?.id ?? 'warmup';
+    const resolveStackId = (candidate: unknown, fallback: string): string => {
+      if (typeof candidate === 'string' && validStackIds.has(candidate.trim())) {
+        return candidate.trim();
+      }
+      return validStackIds.has(fallback) ? fallback : fallbackStackId;
+    };
     const suggestionMap = new Map(REVIEW_SUGGESTIONS.map((c) => [c.id, c]));
 
     if (action === 'promote') {
@@ -81,7 +91,6 @@ export async function POST(request: Request): Promise<Response> {
         return jsonResponse({ error: 'Select at least one card to promote.' }, 400);
       }
 
-      const existingIds = new Set(cards.map((c) => c.id));
       const nextCards = cards.slice();
       const promotedSet = new Set(reviewState.promotedIds);
       let addedCount = 0;
@@ -93,10 +102,7 @@ export async function POST(request: Request): Promise<Response> {
         const source = suggestionMap.get(id);
         if (!source) continue;
 
-        const targetStack =
-          typeof entry.stackId === 'string' && validStackIds.has(entry.stackId.trim())
-            ? entry.stackId.trim()
-            : source.stackId;
+        const targetStack = resolveStackId(entry.stackId, source.stackId);
 
         const deOverride =
           typeof entry.de === 'string' && entry.de.trim()
@@ -109,7 +115,8 @@ export async function POST(request: Request): Promise<Response> {
 
         promotedSet.add(id);
 
-        if (!existingIds.has(id)) {
+        const existingIdx = nextCards.findIndex((c) => c.id === id);
+        if (existingIdx < 0) {
           const promotedCard: CardItem = {
             ...source,
             stackId: targetStack,
@@ -120,7 +127,15 @@ export async function POST(request: Request): Promise<Response> {
             createdAt: new Date().toISOString(),
           };
           nextCards.unshift(promotedCard);
-          existingIds.add(id);
+          addedCount += 1;
+        } else if (nextCards[existingIdx].archived) {
+          nextCards[existingIdx] = {
+            ...nextCards[existingIdx],
+            stackId: targetStack,
+            de: deOverride,
+            en: enOverride,
+            archived: false,
+          };
           addedCount += 1;
         }
       }
@@ -171,6 +186,7 @@ export async function POST(request: Request): Promise<Response> {
         }
         nextCards.unshift({
           ...suggestion,
+          stackId: resolveStackId(undefined, suggestion.stackId),
           [language]: newText,
           isCustom: true,
           archived: false,

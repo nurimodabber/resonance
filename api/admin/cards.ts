@@ -2,7 +2,9 @@ import { jsonResponse, requireAdmin } from '../_lib/auth.js';
 import {
   CARDS_PATH,
   getCardsOrSeed,
+  getReviewState,
   getStacksOrSeed,
+  REVIEW_STATE_PATH,
   SEED_CARDS,
   validateCardInput,
   writeJsonBlob,
@@ -156,13 +158,22 @@ export async function DELETE(request: Request): Promise<Response> {
       return jsonResponse({ error: 'Card ID is required.' }, 400);
     }
 
-    const cards = await getCardsOrSeed();
+    const [cards, reviewState] = await Promise.all([getCardsOrSeed(), getReviewState()]);
     const nextCards = cards.filter((c) => c.id !== id);
     if (nextCards.length === cards.length) {
       return jsonResponse({ error: 'Card not found.' }, 404);
     }
 
-    await writeJsonBlob(CARDS_PATH, nextCards);
+    const writes: Promise<void>[] = [writeJsonBlob(CARDS_PATH, nextCards)];
+    if (reviewState.promotedIds.includes(id)) {
+      writes.push(
+        writeJsonBlob(REVIEW_STATE_PATH, {
+          ...reviewState,
+          promotedIds: reviewState.promotedIds.filter((pid) => pid !== id),
+        }),
+      );
+    }
+    await Promise.all(writes);
     return jsonResponse({ ok: true, deletedId: id });
   } catch (err) {
     console.error('[api/admin/cards] DELETE failed:', err);

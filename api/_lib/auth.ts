@@ -182,7 +182,7 @@ export function requireAdmin(
   request: Request,
 ): { ok: true; email: string } | { ok: false; response: Response } {
   const secret = getSessionSecret();
-  if (!secret || !process.env.BLOB_READ_WRITE_TOKEN) {
+  if (!secret || !(process.env.BLOB_READ_WRITE_TOKEN || process.env.VERCEL_OIDC_TOKEN)) {
     return {
       ok: false,
       response: jsonResponse({ error: 'Server storage or auth secret is not configured.' }, 503),

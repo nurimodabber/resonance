@@ -128,4 +128,31 @@ describe('reviewScoring & 1/3–2/3 recommendation engine', () => {
     );
     expect(sorted.map((s) => s.cardId)).toEqual(['UPVOTED', 'DOWNVOTED', 'UNRATED']);
   });
+
+  it('scopes dismissed editIds to edit revision so newer edits resurface', () => {
+    const live1 = makeCard('L_1');
+    const oldTimestamp = '2026-11-24T10:00:00Z';
+    const newTimestamp = '2026-11-25T10:00:00Z';
+
+    const dismissedOld = aggregateReviewStats({
+      suggestions: [],
+      liveCards: [live1],
+      reviewers: [
+        {
+          reviewerId: 'rev_a',
+          updatedAt: newTimestamp,
+          votes: {},
+          edits: {
+            L_1: { text: 'Revised wording v2', language: 'en', updatedAt: newTimestamp },
+          },
+        },
+      ],
+      promotedIds: [],
+      dismissedEditIds: [`rev_a::L_1::${oldTimestamp}`],
+    });
+
+    const edit = dismissedOld[0].edits[0];
+    expect(edit.id).toBe(`rev_a::L_1::${newTimestamp}`);
+    expect(edit.dismissed).toBe(false);
+  });
 });

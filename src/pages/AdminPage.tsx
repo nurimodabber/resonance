@@ -1,10 +1,28 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ChevronLeftIcon,
-  StackArtwork,
-  ThumbDownIcon,
-  ThumbUpIcon,
-} from '../components/Icons';
+  ArrowDown,
+  ArrowUp,
+  BarChart3,
+  BookOpen,
+  Check,
+  ChevronRight,
+  Copy,
+  ExternalLink,
+  FileCheck2,
+  Inbox,
+  Layers,
+  LogOut,
+  Menu,
+  Moon,
+  PanelLeft,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings,
+  Sun,
+  X,
+} from 'lucide-react';
+import { ConcentricLogo, StackArtwork, ThumbDownIcon, ThumbUpIcon } from '../components/Icons';
 import { useResonance } from '../context/ResonanceContext';
 import { buildStackMap, getStackMetaSafe, STACK_ICON_IDS } from '../data/stacks';
 import {
@@ -51,7 +69,12 @@ import type {
   StackMeta,
 } from '../types/deck';
 
-type AdminTab = 'cards' | 'stacks' | 'review' | 'insights' | 'inbox' | 'security';
+type AdminTab = 'cards' | 'stacks' | 'review' | 'inbox' | 'insights' | 'security';
+type CardStatusFilter = 'active' | 'archived' | 'all';
+type StackStatusFilter = 'active' | 'archived' | 'all';
+type ReviewSubTab = 'suggestion' | 'live' | 'edits';
+type InboxStatusTab = 'pending' | 'promoted' | 'dismissed';
+type InsightsSubTab = 'best' | 'worst';
 
 function slugifyStackId(input: string): string {
   return input
@@ -62,9 +85,23 @@ function slugifyStackId(input: string): string {
     .slice(0, 36);
 }
 
+function getInitials(email: string | null | undefined): string {
+  if (!email) return 'R';
+  const local = email.split('@')[0] || 'R';
+  return local.slice(0, 2).toUpperCase();
+}
+
 export const AdminPage: React.FC = () => {
-  const { lang, stacks: publicStacks, cards: publicCards, refreshCatalog, navigate } =
-    useResonance();
+  const {
+    lang,
+    toggleLang,
+    theme,
+    toggleTheme,
+    stacks: publicStacks,
+    cards: publicCards,
+    refreshCatalog,
+    navigate,
+  } = useResonance();
   const isDe = lang === 'de';
 
   const [authStatus, setAuthStatus] = useState<AdminAuthStatus | null>(null);
@@ -75,7 +112,13 @@ export const AdminPage: React.FC = () => {
   const [authError, setAuthError] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
 
+  // Portal shell navigation state
   const [tab, setTab] = useState<AdminTab>('cards');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  // Data state
   const [adminStacks, setAdminStacks] = useState<StackMeta[]>(publicStacks);
   const [adminCards, setAdminCards] = useState<CardItem[]>(publicCards);
   const [ratings, setRatings] = useState<CardRating[]>([]);
@@ -84,15 +127,16 @@ export const AdminPage: React.FC = () => {
   const [statusBanner, setStatusBanner] = useState('');
   const [errorBanner, setErrorBanner] = useState('');
 
-  // Cards tab filters & state
+  // Cards (Catalog) filters & state
   const [search, setSearch] = useState('');
   const [stackFilter, setStackFilter] = useState<StackId | 'all'>('all');
   const [kindFilter, setKindFilter] = useState<CardKind | 'all'>('all');
-  const [showArchived, setShowArchived] = useState(false);
+  const [cardStatusFilter, setCardStatusFilter] = useState<CardStatusFilter>('active');
   const [confirmDeleteCardId, setConfirmDeleteCardId] = useState<string | null>(null);
   const [editingCard, setEditingCard] = useState<CardItem | null>(null);
 
-  // Stacks tab modals
+  // Stacks filters & modals
+  const [stackStatusFilter, setStackStatusFilter] = useState<StackStatusFilter>('all');
   const [editingStack, setEditingStack] = useState<{
     isNew: boolean;
     stack: StackMeta;
@@ -103,13 +147,18 @@ export const AdminPage: React.FC = () => {
     reassignTo: StackId;
   } | null>(null);
 
-  // Inbox promote modal
+  // Inbox filters & promote modal
+  const [inboxStatusTab, setInboxStatusTab] = useState<InboxStatusTab>('pending');
+  const [inboxSearch, setInboxSearch] = useState('');
   const [promoting, setPromoting] = useState<{
     sub: GroupSubmission;
     stackId: StackId;
     de: string;
     en: string;
   } | null>(null);
+
+  // Insights sub-tab
+  const [insightsSubTab, setInsightsSubTab] = useState<InsightsSubTab>('best');
 
   // Change password form
   const [currentPassword, setCurrentPassword] = useState('');
@@ -120,26 +169,48 @@ export const AdminPage: React.FC = () => {
   const [reviewSummary, setReviewSummary] = useState<AdminReviewSummary | null>(null);
   const [reviewPreset, setReviewPreset] = useState<RecommendationPreset>('auto');
   const [reviewCategory, setReviewCategory] = useState<string>('all');
-  const [reviewSource, setReviewSource] = useState<'suggestions' | 'live'>('suggestions');
+  const [reviewSubTab, setReviewSubTab] = useState<ReviewSubTab>('suggestion');
+  const [reviewSearch, setReviewSearch] = useState('');
   const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(new Set());
   const [copiedReviewLink, setCopiedReviewLink] = useState(false);
 
   const stackMap = useMemo(() => buildStackMap(adminStacks), [adminStacks]);
   const ratingSummary = useMemo(() => summarizeRatings(ratings), [ratings]);
+  const firstStackId = adminStacks[0]?.id ?? 'warmup';
+  const quotesStackId = adminStacks.find((s) => s.id === 'quotes')?.id ?? firstStackId;
 
   const loadAdminData = useCallback(async () => {
-    try {
-      const [insightsRes, reviewRes] = await Promise.all([
-        fetchAdminInsights(),
-        fetchAdminReviewSummary(),
-      ]);
-      setAdminStacks(insightsRes.stacks);
-      setAdminCards(insightsRes.cards);
-      setRatings(insightsRes.ratings);
-      setSubmissions(insightsRes.submissions);
-      setReviewSummary(reviewRes);
-    } catch (err) {
-      setErrorBanner(err instanceof Error ? err.message : 'Failed to load admin data');
+    const [insightsRes, reviewRes] = await Promise.allSettled([
+      fetchAdminInsights(),
+      fetchAdminReviewSummary(),
+    ]);
+
+    const errors: string[] = [];
+    if (insightsRes.status === 'fulfilled') {
+      setAdminStacks(insightsRes.value.stacks);
+      setAdminCards(insightsRes.value.cards);
+      setRatings(insightsRes.value.ratings);
+      setSubmissions(insightsRes.value.submissions);
+    } else {
+      errors.push(
+        insightsRes.reason instanceof Error
+          ? insightsRes.reason.message
+          : 'Failed to load admin insights.',
+      );
+    }
+
+    if (reviewRes.status === 'fulfilled') {
+      setReviewSummary(reviewRes.value);
+    } else {
+      errors.push(
+        reviewRes.reason instanceof Error
+          ? reviewRes.reason.message
+          : 'Failed to load friend review summary.',
+      );
+    }
+
+    if (errors.length > 0) {
+      setErrorBanner(errors.join(' '));
     }
   }, []);
 
@@ -176,10 +247,26 @@ export const AdminPage: React.FC = () => {
     return counts;
   }, [adminStacks, adminCards]);
 
+  const cardKindCounts = useMemo(() => {
+    const matchesStatus = (c: CardItem) => {
+      if (cardStatusFilter === 'active') return !c.archived;
+      if (cardStatusFilter === 'archived') return Boolean(c.archived);
+      return true;
+    };
+    const scoped = adminCards.filter(matchesStatus);
+    return {
+      all: scoped.length,
+      question: scoped.filter((c) => c.kind === 'question').length,
+      quote: scoped.filter((c) => c.kind === 'quote').length,
+      wildcard: scoped.filter((c) => c.kind === 'wildcard').length,
+    };
+  }, [adminCards, cardStatusFilter]);
+
   const filteredCards = useMemo(() => {
     const q = search.trim().toLowerCase();
     return adminCards.filter((c) => {
-      if (!showArchived && c.archived) return false;
+      if (cardStatusFilter === 'active' && c.archived) return false;
+      if (cardStatusFilter === 'archived' && !c.archived) return false;
       if (stackFilter !== 'all' && c.stackId !== stackFilter) return false;
       if (kindFilter !== 'all' && c.kind !== kindFilter) return false;
       if (q) {
@@ -192,14 +279,30 @@ export const AdminPage: React.FC = () => {
       }
       return true;
     });
-  }, [adminCards, showArchived, stackFilter, kindFilter, search]);
+  }, [adminCards, cardStatusFilter, stackFilter, kindFilter, search]);
+
+  const stackStatusCounts = useMemo(() => {
+    return {
+      all: adminStacks.length,
+      active: adminStacks.filter((s) => !s.archived).length,
+      archived: adminStacks.filter((s) => Boolean(s.archived)).length,
+    };
+  }, [adminStacks]);
+
+  const filteredStacks = useMemo(() => {
+    return adminStacks.filter((s) => {
+      if (stackStatusFilter === 'active') return !s.archived;
+      if (stackStatusFilter === 'archived') return Boolean(s.archived);
+      return true;
+    });
+  }, [adminStacks, stackStatusFilter]);
 
   const sortedByRating = useMemo(() => {
     const withScores = adminCards
       .filter((c) => ratingSummary[c.id]?.total > 0)
       .map((c) => ({ card: c, score: ratingSummary[c.id] }));
     const best = [...withScores].sort((a, b) => b.score.net - a.score.net || b.score.up - a.score.up);
-    const worst = [...withScores].sort((a, b) => a.score.net - b.score.net || b.score.down - a.score.down);
+    const worst = [...withScores].sort((a, b) => a.score.net - b.score.net || a.score.down - b.score.down);
     return { best, worst };
   }, [adminCards, ratingSummary]);
 
@@ -221,10 +324,31 @@ export const AdminPage: React.FC = () => {
     });
   }, [adminStacks, adminCards, ratingSummary]);
 
+  const inboxCounts = useMemo(() => {
+    return {
+      pending: submissions.filter((s) => s.status === 'pending').length,
+      promoted: submissions.filter((s) => s.status === 'promoted').length,
+      dismissed: submissions.filter((s) => s.status === 'dismissed').length,
+    };
+  }, [submissions]);
+
   const pendingInbox = useMemo(
     () => submissions.filter((s) => s.status === 'pending'),
     [submissions],
   );
+
+  const filteredInbox = useMemo(() => {
+    const q = inboxSearch.trim().toLowerCase();
+    return submissions.filter((s) => {
+      if (s.status !== inboxStatusTab) return false;
+      if (!q) return true;
+      return (
+        s.text.toLowerCase().includes(q) ||
+        s.roomCode.toLowerCase().includes(q) ||
+        (s.authorName?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  }, [submissions, inboxStatusTab, inboxSearch]);
 
   const recommendedReviewIds = useMemo(() => {
     if (!reviewSummary) return new Set<string>();
@@ -239,53 +363,133 @@ export const AdminPage: React.FC = () => {
     const stats = reviewSummary?.stats || [];
     let ratedSuggestions = 0;
     let totalSuggestions = 0;
+    let totalLive = 0;
     let pendingEdits = 0;
     for (const s of stats) {
       if (s.source === 'suggestion') {
         totalSuggestions += 1;
         if (s.voteCount > 0) ratedSuggestions += 1;
+      } else {
+        totalLive += 1;
       }
       pendingEdits += s.edits.filter((e) => !e.dismissed).length;
     }
-    return { ratedSuggestions, totalSuggestions, pendingEdits };
+    return { ratedSuggestions, totalSuggestions, totalLive, pendingEdits };
   }, [reviewSummary]);
 
   const filteredReviewStats = useMemo(() => {
-    if (!reviewSummary) return [];
+    if (!reviewSummary || reviewSubTab === 'edits') return [];
+    const q = reviewSearch.trim().toLowerCase();
     const base = reviewSummary.stats.filter((item) => {
-      if (item.source !== reviewSource) return false;
+      if (item.source !== reviewSubTab) return false;
       if (reviewCategory !== 'all' && reviewCategoryKey(item.card) !== reviewCategory) {
         return false;
+      }
+      if (q) {
+        return (
+          item.card.de.toLowerCase().includes(q) ||
+          item.card.en.toLowerCase().includes(q) ||
+          item.cardId.toLowerCase().includes(q) ||
+          (item.card.author?.toLowerCase().includes(q) ?? false)
+        );
       }
       return true;
     });
     return sortReviewStats(base);
-  }, [reviewSummary, reviewSource, reviewCategory]);
+  }, [reviewSummary, reviewSubTab, reviewCategory, reviewSearch]);
 
   const visiblePendingEdits = useMemo(() => {
     if (!reviewSummary) return [];
+    const q = reviewSearch.trim().toLowerCase();
     const out: Array<{
       stat: AdminReviewSummary['stats'][number];
       edit: AdminReviewSummary['stats'][number]['edits'][number];
     }> = [];
     for (const stat of reviewSummary.stats) {
-      if (stat.source !== reviewSource) continue;
       if (reviewCategory !== 'all' && reviewCategoryKey(stat.card) !== reviewCategory) continue;
       for (const edit of stat.edits) {
-        if (!edit.dismissed) {
-          out.push({ stat, edit });
+        if (edit.dismissed) continue;
+        if (q) {
+          const matchesQuery =
+            stat.cardId.toLowerCase().includes(q) ||
+            edit.suggestedText.toLowerCase().includes(q) ||
+            (edit.reviewerName?.toLowerCase().includes(q) ?? false) ||
+            stat.card.de.toLowerCase().includes(q) ||
+            stat.card.en.toLowerCase().includes(q);
+          if (!matchesQuery) continue;
         }
+        out.push({ stat, edit });
       }
     }
     return out;
-  }, [reviewSummary, reviewSource, reviewCategory]);
+  }, [reviewSummary, reviewCategory, reviewSearch]);
 
   const selectedVisibleReviewIds = useMemo(() => {
-    if (reviewSource !== 'suggestions') return [];
+    if (reviewSubTab !== 'suggestion') return [];
     return filteredReviewStats
       .filter((s) => !s.promoted && selectedReviewIds.has(s.cardId))
       .map((s) => s.cardId);
-  }, [filteredReviewStats, selectedReviewIds, reviewSource]);
+  }, [filteredReviewStats, selectedReviewIds, reviewSubTab]);
+
+  const notifyOk = (msg: string) => {
+    setErrorBanner('');
+    setStatusBanner(msg);
+  };
+
+  const notifyErr = (err: unknown) => {
+    setStatusBanner('');
+    setErrorBanner(err instanceof Error ? err.message : 'Action failed.');
+  };
+
+  const handleSync = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      await Promise.all([loadAdminData(), refreshCatalog()]);
+      notifyOk(isDe ? 'Daten synchronisiert.' : 'Synced with backend.');
+    } catch (err) {
+      notifyErr(err);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const openQuickNewCard = (kind: CardKind) => {
+    const defaultStack =
+      kind === 'quote'
+        ? quotesStackId
+        : stackFilter !== 'all'
+          ? stackFilter
+          : firstStackId;
+    setEditingCard({
+      id: `C_${Date.now()}`,
+      stackId: defaultStack,
+      kind,
+      de: '',
+      en: '',
+      isCustom: true,
+    });
+    setMobileNavOpen(false);
+  };
+
+  const openQuickNewStack = () => {
+    setEditingStack({
+      isNew: true,
+      stack: {
+        id: '',
+        ring: adminStacks.length + 1,
+        iconId: 'reflection',
+        nameDe: '',
+        nameEn: '',
+        subtitleDe: '',
+        subtitleEn: '',
+        accent: 'var(--accent)',
+        accentSoft: 'var(--accent-soft)',
+        archived: false,
+      },
+    });
+    setMobileNavOpen(false);
+  };
 
   const handleToggleSelectReviewCard = (cardId: string) => {
     setSelectedReviewIds((prev) => {
@@ -362,16 +566,6 @@ export const AdminPage: React.FC = () => {
     }
   };
 
-  const notifyOk = (msg: string) => {
-    setErrorBanner('');
-    setStatusBanner(msg);
-  };
-
-  const notifyErr = (err: unknown) => {
-    setStatusBanner('');
-    setErrorBanner(err instanceof Error ? err.message : 'Action failed.');
-  };
-
   // ---------- Auth Handlers ----------
 
   const handleClaimAdmin = async (e: React.FormEvent) => {
@@ -379,7 +573,9 @@ export const AdminPage: React.FC = () => {
     setAuthError('');
     if (password.length < 8) {
       setAuthError(
-        isDe ? 'Passwort muss mindestens 8 Zeichen lang sein.' : 'Password must be at least 8 characters.',
+        isDe
+          ? 'Passwort muss mindestens 8 Zeichen lang sein.'
+          : 'Password must be at least 8 characters.',
       );
       return;
     }
@@ -457,7 +653,9 @@ export const AdminPage: React.FC = () => {
       return;
     }
     if (newPassword !== confirmNewPassword) {
-      notifyErr(new Error(isDe ? 'Neue Passwörter stimmen nicht überein.' : 'New passwords do not match.'));
+      notifyErr(
+        new Error(isDe ? 'Neue Passwörter stimmen nicht überein.' : 'New passwords do not match.'),
+      );
       return;
     }
     setBusyAction(true);
@@ -577,10 +775,16 @@ export const AdminPage: React.FC = () => {
 
   const handleMoveStackOrder = async (index: number, delta: -1 | 1) => {
     const target = index + delta;
-    if (target < 0 || target >= adminStacks.length || busyAction) return;
+    if (target < 0 || target >= filteredStacks.length || busyAction) return;
     const copy = adminStacks.slice();
-    const [item] = copy.splice(index, 1);
-    copy.splice(target, 0, item);
+    const currentId = filteredStacks[index].id;
+    const targetId = filteredStacks[target].id;
+    const realIndex = copy.findIndex((s) => s.id === currentId);
+    const realTarget = copy.findIndex((s) => s.id === targetId);
+    if (realIndex < 0 || realTarget < 0) return;
+
+    const [item] = copy.splice(realIndex, 1);
+    copy.splice(realTarget, 0, item);
     setBusyAction(true);
     try {
       const next = await reorderStacks(copy.map((s) => s.id));
@@ -619,7 +823,8 @@ export const AdminPage: React.FC = () => {
 
   const openDeleteStackModal = (stack: StackMeta) => {
     const count = cardCountsByStack[stack.id]?.total || 0;
-    const fallback = adminStacks.find((s) => s.id !== stack.id && !s.archived) ??
+    const fallback =
+      adminStacks.find((s) => s.id !== stack.id && !s.archived) ??
       adminStacks.find((s) => s.id !== stack.id);
     if (!fallback) {
       notifyErr(
@@ -759,46 +964,228 @@ export const AdminPage: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  // ---------- Minimal Top Bar for Auth Gates ----------
+
+  const authUtilityHeader = (
+    <header
+      className="h-14 border-b px-4 sm:px-6 flex items-center justify-between"
+      style={{ borderColor: 'var(--border)', backgroundColor: 'var(--subtle)' }}
+    >
+      <button
+        type="button"
+        onClick={() => navigate('/')}
+        className="inline-flex items-center gap-2 text-xs font-medium cursor-pointer hover:opacity-80"
+        style={{ color: 'var(--ink)' }}
+      >
+        <ConcentricLogo size={24} />
+        <span className="font-semibold tracking-tight">Resonance</span>
+        <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+          Studio
+        </span>
+      </button>
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border cursor-pointer hover:bg-[var(--elevated)]"
+          style={{ borderColor: 'var(--border)', color: 'var(--ink-muted)' }}
+        >
+          <ExternalLink size={13} />
+          <span>{isDe ? 'Zur Webseite' : 'Back to App'}</span>
+        </button>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer hover:bg-[var(--elevated)]"
+          style={{ borderColor: 'var(--border)', color: 'var(--ink-muted)' }}
+        >
+          {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+        </button>
+        <button
+          type="button"
+          onClick={toggleLang}
+          className="h-8 px-2.5 rounded-lg border text-[11px] font-semibold cursor-pointer hover:bg-[var(--elevated)]"
+          style={{ borderColor: 'var(--border)', color: 'var(--ink)' }}
+        >
+          {lang.toUpperCase()}
+        </button>
+      </div>
+    </header>
+  );
+
   // ---------- Render: Auth / Loading ----------
 
   if (!authStatus) {
     return (
-      <main
-        className="max-w-md mx-auto px-4 py-16 text-center text-sm"
-        style={{ color: 'var(--ink-muted)' }}
-      >
-        {isDe ? 'Lade Studio…' : 'Loading Studio…'}
-      </main>
+      <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--bg)' }}>
+        {authUtilityHeader}
+        <main
+          className="flex-1 flex items-center justify-center px-4 text-sm"
+          style={{ color: 'var(--ink-muted)' }}
+        >
+          {isDe ? 'Lade Studio…' : 'Loading Studio…'}
+        </main>
+      </div>
     );
   }
 
   if (authStatus.mode === 'vercel' && !authStatus.configured) {
     return (
-      <main className="max-w-md mx-auto px-4 pt-12 pb-16">
-        <div className="noble-bezel p-1.5 rounded-[28px]">
-          <div className="noble-card rounded-[22px] p-6 sm:p-7 space-y-3">
-            <h1 className="font-serif-card text-2xl font-medium m-0">
-              {isDe ? 'Server-Konfiguration fehlt' : 'Storage Secret Required'}
-            </h1>
-            <p className="text-xs leading-relaxed m-0" style={{ color: 'var(--ink-muted)' }}>
-              {isDe
-                ? 'Vercel Blob oder ADMIN_SESSION_SECRET ist noch nicht verbunden.'
-                : 'BLOB_READ_WRITE_TOKEN or ADMIN_SESSION_SECRET is missing on this deployment.'}
-            </p>
+      <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--bg)' }}>
+        {authUtilityHeader}
+        <main className="flex-1 flex items-center justify-center px-4 py-12">
+          <div className="w-full max-w-md noble-bezel p-1.5 rounded-[28px]">
+            <div className="noble-card rounded-[22px] p-6 sm:p-7 space-y-3">
+              <h1 className="font-serif-card text-2xl font-medium m-0">
+                {isDe ? 'Server-Konfiguration fehlt' : 'Storage Secret Required'}
+              </h1>
+              <p className="text-xs leading-relaxed m-0" style={{ color: 'var(--ink-muted)' }}>
+                {isDe
+                  ? 'Vercel Blob oder ADMIN_SESSION_SECRET ist noch nicht verbunden.'
+                  : 'BLOB_READ_WRITE_TOKEN or ADMIN_SESSION_SECRET is missing on this deployment.'}
+              </p>
+            </div>
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
     );
   }
 
   if (authStatus.mode === 'vercel' && !authStatus.authenticated) {
-    // One-Button Initial Claim when no admin exists yet
     if (!authStatus.hasAdmin) {
       return (
-        <main className="max-w-md mx-auto px-4 pt-10 pb-16">
-          <div className="noble-bezel p-1.5 rounded-[28px]">
+        <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--bg)' }}>
+          {authUtilityHeader}
+          <main className="flex-1 flex items-center justify-center px-4 py-10">
+            <div className="w-full max-w-md noble-bezel p-1.5 rounded-[28px]">
+              <form
+                onSubmit={handleClaimAdmin}
+                className="noble-card relative rounded-[22px] p-6 sm:p-7 space-y-4"
+              >
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-2.5 rounded-[14px] border"
+                  style={{ borderColor: 'var(--gold-hairline)' }}
+                />
+                <div className="relative z-10 space-y-4">
+                  <div className="space-y-1">
+                    <span
+                      className="inline-block text-[11px] uppercase tracking-[0.14em]"
+                      style={{ color: 'var(--gold)' }}
+                    >
+                      {isDe ? 'Einmalige Einrichtung' : 'One-Time Setup'}
+                    </span>
+                    <h1 className="font-serif-card text-2xl font-medium m-0">
+                      {isDe ? 'Kurator-Studio aktivieren' : 'Activate Curator Studio'}
+                    </h1>
+                    <p className="text-xs leading-relaxed m-0" style={{ color: 'var(--ink-muted)' }}>
+                      {isDe
+                        ? 'Lege einmalig dein Admin-Passwort fest. Danach ist die Ersteinrichtung dauerhaft gesperrt.'
+                        : 'Set your curator password once. After activation, public setup locks permanently.'}
+                    </p>
+                  </div>
+
+                  {authError && (
+                    <div
+                      className="text-xs px-3.5 py-2.5 rounded-xl"
+                      style={{ backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}
+                    >
+                      {authError}
+                    </div>
+                  )}
+
+                  <label className="block space-y-1">
+                    <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                      Email
+                    </span>
+                    <input
+                      type="email"
+                      required
+                      value={claimEmail}
+                      onChange={(e) => setClaimEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      className="w-full rounded-full px-4 py-2.5 text-sm"
+                      style={{
+                        backgroundColor: 'var(--subtle)',
+                        color: 'var(--ink)',
+                        border: '1px solid var(--border)',
+                      }}
+                    />
+                  </label>
+
+                  <label className="block space-y-1">
+                    <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                      {isDe ? 'Passwort (mind. 8 Zeichen)' : 'Password (min. 8 characters)'}
+                    </span>
+                    <input
+                      type="password"
+                      required
+                      minLength={8}
+                      autoComplete="new-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full rounded-full px-4 py-2.5 text-sm"
+                      style={{
+                        backgroundColor: 'var(--subtle)',
+                        color: 'var(--ink)',
+                        border: '1px solid var(--border)',
+                      }}
+                    />
+                  </label>
+
+                  <label className="block space-y-1">
+                    <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                      {isDe ? 'Passwort bestätigen' : 'Confirm password'}
+                    </span>
+                    <input
+                      type="password"
+                      required
+                      minLength={8}
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full rounded-full px-4 py-2.5 text-sm"
+                      style={{
+                        backgroundColor: 'var(--subtle)',
+                        color: 'var(--ink)',
+                        border: '1px solid var(--border)',
+                      }}
+                    />
+                  </label>
+
+                  <button
+                    type="submit"
+                    disabled={authBusy}
+                    className="w-full py-3 rounded-full text-sm font-medium cursor-pointer disabled:opacity-60"
+                    style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
+                  >
+                    {authBusy
+                      ? isDe
+                        ? 'Aktiviere…'
+                        : 'Activating…'
+                      : isDe
+                        ? 'Admin anlegen & Studio öffnen'
+                        : 'Create Admin & Enter Studio'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--bg)' }}>
+        {authUtilityHeader}
+        <main className="flex-1 flex items-center justify-center px-4 py-12">
+          <div className="w-full max-w-md noble-bezel p-1.5 rounded-[28px]">
             <form
-              onSubmit={handleClaimAdmin}
+              onSubmit={handleLogin}
               className="noble-card relative rounded-[22px] p-6 sm:p-7 space-y-4"
             >
               <div
@@ -808,1372 +1195,2035 @@ export const AdminPage: React.FC = () => {
               />
               <div className="relative z-10 space-y-4">
                 <div className="space-y-1">
-                  <span
-                    className="inline-block text-[11px] uppercase tracking-[0.14em]"
-                    style={{ color: 'var(--gold)' }}
-                  >
-                    {isDe ? 'Einmalige Einrichtung' : 'One-Time Setup'}
-                  </span>
                   <h1 className="font-serif-card text-2xl font-medium m-0">
-                    {isDe ? 'Kurator-Studio aktivieren' : 'Activate Curator Studio'}
+                    {isDe ? 'Kurator-Anmeldung' : 'Curator Sign In'}
                   </h1>
-                  <p className="text-xs leading-relaxed m-0" style={{ color: 'var(--ink-muted)' }}>
+                  <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
                     {isDe
-                      ? 'Lege einmalig dein Admin-Passwort fest. Danach ist die Ersteinrichtung dauerhaft gesperrt.'
-                      : 'Set your curator password once. After activation, public setup locks permanently.'}
+                      ? 'Melde dich an, um Stapel, Fragen und Bewertungen zu verwalten.'
+                      : 'Sign in with your curator credentials to manage stacks, cards, and ratings.'}
                   </p>
                 </div>
-
                 {authError && (
                   <div
-                    className="text-xs px-3.5 py-2.5 rounded-xl"
+                    className="text-xs px-3.5 py-2 rounded-xl"
                     style={{ backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}
                   >
                     {authError}
                   </div>
                 )}
-
-                <label className="block space-y-1">
-                  <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                    Email
-                  </span>
-                  <input
-                    type="email"
-                    required
-                    value={claimEmail}
-                    onChange={(e) => setClaimEmail(e.target.value)}
-                    placeholder="you@example.com"
-                    className="w-full rounded-full px-4 py-2.5 text-sm"
-                    style={{
-                      backgroundColor: 'var(--subtle)',
-                      color: 'var(--ink)',
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </label>
-
-                <label className="block space-y-1">
-                  <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                    {isDe ? 'Passwort (mind. 8 Zeichen)' : 'Password (min. 8 characters)'}
-                  </span>
-                  <input
-                    type="password"
-                    required
-                    minLength={8}
-                    autoComplete="new-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full rounded-full px-4 py-2.5 text-sm"
-                    style={{
-                      backgroundColor: 'var(--subtle)',
-                      color: 'var(--ink)',
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </label>
-
-                <label className="block space-y-1">
-                  <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                    {isDe ? 'Passwort bestätigen' : 'Confirm password'}
-                  </span>
-                  <input
-                    type="password"
-                    required
-                    minLength={8}
-                    autoComplete="new-password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full rounded-full px-4 py-2.5 text-sm"
-                    style={{
-                      backgroundColor: 'var(--subtle)',
-                      color: 'var(--ink)',
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </label>
-
+                <input
+                  type="email"
+                  required
+                  autoComplete="email"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  placeholder="Email"
+                  className="w-full rounded-full px-4 py-2.5 text-sm"
+                  style={{
+                    backgroundColor: 'var(--subtle)',
+                    color: 'var(--ink)',
+                    border: '1px solid var(--border)',
+                  }}
+                />
+                <input
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Password"
+                  className="w-full rounded-full px-4 py-2.5 text-sm"
+                  style={{
+                    backgroundColor: 'var(--subtle)',
+                    color: 'var(--ink)',
+                    border: '1px solid var(--border)',
+                  }}
+                />
                 <button
                   type="submit"
                   disabled={authBusy}
                   className="w-full py-3 rounded-full text-sm font-medium cursor-pointer disabled:opacity-60"
                   style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
                 >
-                  {authBusy
-                    ? isDe
-                      ? 'Aktiviere…'
-                      : 'Activating…'
-                    : isDe
-                      ? 'Admin anlegen & Studio öffnen'
-                      : 'Create Admin & Enter Studio'}
+                  {authBusy ? (isDe ? 'Prüfe…' : 'Signing in…') : isDe ? 'Anmelden' : 'Sign In'}
                 </button>
               </div>
             </form>
           </div>
         </main>
-      );
-    }
-
-    // Standard Sign In once admin is claimed
-    return (
-      <main className="max-w-md mx-auto px-4 pt-12 pb-16">
-        <div className="noble-bezel p-1.5 rounded-[28px]">
-          <form
-            onSubmit={handleLogin}
-            className="noble-card relative rounded-[22px] p-6 sm:p-7 space-y-4"
-          >
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-2.5 rounded-[14px] border"
-              style={{ borderColor: 'var(--gold-hairline)' }}
-            />
-            <div className="relative z-10 space-y-4">
-              <div className="space-y-1">
-                <h1 className="font-serif-card text-2xl font-medium m-0">
-                  {isDe ? 'Kurator-Anmeldung' : 'Curator Sign In'}
-                </h1>
-                <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
-                  {isDe
-                    ? 'Melde dich an, um Stapel, Fragen und Bewertungen zu verwalten.'
-                    : 'Sign in with your curator credentials to manage stacks, cards, and ratings.'}
-                </p>
-              </div>
-              {authError && (
-                <div
-                  className="text-xs px-3.5 py-2 rounded-xl"
-                  style={{ backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}
-                >
-                  {authError}
-                </div>
-              )}
-              <input
-                type="email"
-                required
-                autoComplete="email"
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
-                placeholder="Email"
-                className="w-full rounded-full px-4 py-2.5 text-sm"
-                style={{
-                  backgroundColor: 'var(--subtle)',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--border)',
-                }}
-              />
-              <input
-                type="password"
-                required
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Password"
-                className="w-full rounded-full px-4 py-2.5 text-sm"
-                style={{
-                  backgroundColor: 'var(--subtle)',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--border)',
-                }}
-              />
-              <button
-                type="submit"
-                disabled={authBusy}
-                className="w-full py-3 rounded-full text-sm font-medium cursor-pointer disabled:opacity-60"
-                style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
-              >
-                {authBusy ? (isDe ? 'Prüfe…' : 'Signing in…') : isDe ? 'Anmelden' : 'Sign In'}
-              </button>
-            </div>
-          </form>
-        </div>
-      </main>
+      </div>
     );
   }
 
-  // ---------- Render: Authenticated Studio ----------
+  // ---------- Portal Navigation Configuration ----------
 
-  const firstStackId = adminStacks[0]?.id ?? 'warmup';
+  const navItems: Array<{
+    id: AdminTab;
+    label: string;
+    icon: React.ReactNode;
+    badge?: number;
+  }> = [
+    {
+      id: 'cards',
+      label: isDe ? 'Karten' : 'Cards',
+      icon: <BookOpen size={16} />,
+      badge: adminCards.length,
+    },
+    {
+      id: 'stacks',
+      label: isDe ? 'Stapel' : 'Stacks',
+      icon: <Layers size={16} />,
+      badge: adminStacks.length,
+    },
+    {
+      id: 'review',
+      label: isDe ? 'Prüfung' : 'Friend Review',
+      icon: <FileCheck2 size={16} />,
+      badge: reviewOverview.ratedSuggestions + reviewOverview.pendingEdits,
+    },
+    {
+      id: 'inbox',
+      label: isDe ? 'Runden-Eingang' : 'Group Inbox',
+      icon: <Inbox size={16} />,
+      badge: pendingInbox.length,
+    },
+    {
+      id: 'insights',
+      label: isDe ? 'Auswertung' : 'Insights',
+      icon: <BarChart3 size={16} />,
+      badge: ratings.length,
+    },
+    {
+      id: 'security',
+      label: isDe ? 'Betrieb & Sync' : 'Settings & Sync',
+      icon: <Settings size={16} />,
+    },
+  ];
 
-  return (
-    <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 pb-24 space-y-6">
-      {/* Top Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+  const activeNavTitle = navItems.find((n) => n.id === tab)?.label ?? 'Studio';
+
+  const renderSidebarContent = () => (
+    <div className="flex flex-col h-full">
+      {/* Brand Header */}
+      <div className="h-14 px-4 flex items-center justify-between border-b shrink-0" style={{ borderColor: 'var(--border)' }}>
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          className="flex items-center gap-2.5 text-left cursor-pointer hover:opacity-85"
+          style={{ color: 'var(--ink)' }}
+        >
+          <ConcentricLogo size={26} />
+          <div className="leading-tight">
+            <div className="text-sm font-semibold tracking-tight">Resonance</div>
+            <div className="text-[11px]" style={{ color: 'var(--ink-soft)' }}>
+              Studio
+            </div>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMobileNavOpen(false)}
+          aria-label="Close navigation"
+          className="lg:hidden w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer"
+          style={{ color: 'var(--ink-muted)' }}
+        >
+          <X size={16} />
+        </button>
+      </div>
+
+      {/* Scrollable Nav + Quick Create */}
+      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+        <div className="space-y-1">
+          <div
+            className="px-2.5 pb-1 text-[11px] font-medium"
+            style={{ color: 'var(--ink-soft)' }}
+          >
+            {isDe ? 'Arbeitsbereich' : 'Workspace'}
+          </div>
+          {navItems.map((item) => {
+            const active = tab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setTab(item.id);
+                  setMobileNavOpen(false);
+                }}
+                className="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors cursor-pointer"
+                style={{
+                  backgroundColor: active ? 'var(--elevated)' : 'transparent',
+                  color: active ? 'var(--ink)' : 'var(--ink-muted)',
+                }}
+              >
+                <span className="flex items-center gap-2.5 min-w-0">
+                  <span style={{ color: active ? 'var(--accent)' : 'var(--ink-soft)' }}>
+                    {item.icon}
+                  </span>
+                  <span className="truncate">{item.label}</span>
+                </span>
+                {item.badge !== undefined && (
+                  <span
+                    className="px-2 py-0.5 rounded-full text-[11px] tabular-nums shrink-0"
+                    style={{
+                      backgroundColor: active ? 'var(--accent-soft)' : 'var(--card)',
+                      color: active ? 'var(--accent)' : 'var(--ink-muted)',
+                    }}
+                  >
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="border-t pt-4 space-y-2" style={{ borderColor: 'var(--border)' }}>
+          <div
+            className="px-2.5 text-[11px] font-medium"
+            style={{ color: 'var(--ink-soft)' }}
+          >
+            {isDe ? 'Schnellerstellung' : 'Quick Create'}
+          </div>
+          <div className="grid grid-cols-2 gap-1.5 px-0.5">
+            <button
+              type="button"
+              onClick={() => openQuickNewCard('question')}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer hover:bg-[var(--elevated)] transition-colors"
+              style={{
+                borderColor: 'var(--border)',
+                color: 'var(--ink)',
+                backgroundColor: 'var(--card)',
+              }}
+            >
+              <Plus size={12} style={{ color: 'var(--accent)' }} />
+              <span className="truncate">{isDe ? 'Frage' : 'Question'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => openQuickNewCard('quote')}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer hover:bg-[var(--elevated)] transition-colors"
+              style={{
+                borderColor: 'var(--border)',
+                color: 'var(--ink)',
+                backgroundColor: 'var(--card)',
+              }}
+            >
+              <Plus size={12} style={{ color: 'var(--accent)' }} />
+              <span className="truncate">{isDe ? 'Zitat' : 'Quote'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => openQuickNewCard('wildcard')}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer hover:bg-[var(--elevated)] transition-colors"
+              style={{
+                borderColor: 'var(--border)',
+                color: 'var(--ink)',
+                backgroundColor: 'var(--card)',
+              }}
+            >
+              <Plus size={12} style={{ color: 'var(--accent)' }} />
+              <span className="truncate">{isDe ? 'Impuls' : 'Wildcard'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={openQuickNewStack}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer hover:bg-[var(--elevated)] transition-colors"
+              style={{
+                borderColor: 'var(--border)',
+                color: 'var(--ink)',
+                backgroundColor: 'var(--card)',
+              }}
+            >
+              <Plus size={12} style={{ color: 'var(--accent)' }} />
+              <span className="truncate">{isDe ? 'Stapel' : 'Stack'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Pinned Footer */}
+      <div className="p-3 border-t space-y-3 shrink-0" style={{ borderColor: 'var(--border)' }}>
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={() => navigate('/')}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium hover:bg-[var(--elevated)] cursor-pointer"
-            style={{ color: 'var(--ink-muted)' }}
-          >
-            <ChevronLeftIcon size={14} />
-            <span>{isDe ? 'Zurück' : 'Home'}</span>
-          </button>
-          <h1 className="font-serif-card text-2xl font-medium m-0">
-            {isDe ? 'Kuration & Studio' : 'Curator Studio'}
-          </h1>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span
-            className="px-3 py-1 rounded-full text-xs font-medium"
+            className="flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-lg border text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
             style={{
-              backgroundColor:
-                authStatus.mode === 'vercel' ? 'var(--accent-soft)' : 'var(--elevated)',
-              color: authStatus.mode === 'vercel' ? 'var(--accent)' : 'var(--ink-muted)',
+              borderColor: 'var(--border)',
+              color: 'var(--ink)',
+              backgroundColor: 'var(--card)',
             }}
           >
-            {authStatus.mode === 'vercel'
-              ? 'Vercel Blob Live'
-              : isDe
-                ? 'Lokal-Modus'
-                : 'Local Mode'}
-          </span>
+            <ExternalLink size={12} />
+            <span className="truncate">{isDe ? 'Zur Webseite' : 'Back to App'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            className="w-8 h-8 rounded-lg border flex items-center justify-center cursor-pointer hover:bg-[var(--elevated)] shrink-0"
+            style={{
+              borderColor: 'var(--border)',
+              color: 'var(--ink-muted)',
+              backgroundColor: 'var(--card)',
+            }}
+          >
+            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
+          <button
+            type="button"
+            onClick={toggleLang}
+            className="h-8 px-2.5 rounded-lg border text-[11px] font-semibold cursor-pointer hover:bg-[var(--elevated)] shrink-0"
+            style={{
+              borderColor: 'var(--border)',
+              color: 'var(--ink)',
+              backgroundColor: 'var(--card)',
+            }}
+          >
+            {lang.toUpperCase()}
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 px-1">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold shrink-0"
+              style={{
+                backgroundColor: 'var(--elevated)',
+                color: 'var(--ink)',
+                border: '1px solid var(--border)',
+              }}
+            >
+              {getInitials(authStatus.email)}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium truncate">
+                  {authStatus.email ? authStatus.email.split('@')[0] : 'Curator'}
+                </span>
+                <span
+                  className="px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0"
+                  style={{
+                    backgroundColor: 'var(--accent-soft)',
+                    color: 'var(--accent)',
+                  }}
+                >
+                  {authStatus.mode === 'vercel' ? 'Admin' : 'Local'}
+                </span>
+              </div>
+              <div className="text-[11px] truncate" style={{ color: 'var(--ink-soft)' }}>
+                {authStatus.email || (isDe ? 'Lokale Sitzung' : 'Browser session')}
+              </div>
+            </div>
+          </div>
+
           {authStatus.mode === 'vercel' && (
             <button
               type="button"
               onClick={handleLogout}
-              className="px-3 py-1 rounded-full text-xs font-medium hover:bg-[var(--elevated)] cursor-pointer"
+              title={isDe ? 'Abmelden' : 'Sign out'}
+              aria-label={isDe ? 'Abmelden' : 'Sign out'}
+              className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer hover:bg-[var(--elevated)] shrink-0"
               style={{ color: 'var(--ink-muted)' }}
             >
-              {isDe ? 'Abmelden' : 'Sign out'}
+              <LogOut size={14} />
             </button>
           )}
         </div>
       </div>
+    </div>
+  );
 
-      {statusBanner && (
-        <div
-          className="rounded-2xl px-4 py-2.5 text-xs flex items-center justify-between"
-          style={{ backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}
-        >
-          <span>{statusBanner}</span>
-          <button type="button" onClick={() => setStatusBanner('')} className="underline cursor-pointer">
-            OK
-          </button>
-        </div>
-      )}
+  // ---------- Render: Authenticated Portal Shell ----------
 
-      {errorBanner && (
-        <div
-          className="rounded-2xl px-4 py-2.5 text-xs flex items-center justify-between"
-          style={{ backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}
-        >
-          <span>{errorBanner}</span>
-          <button type="button" onClick={() => setErrorBanner('')} className="underline cursor-pointer">
-            OK
-          </button>
-        </div>
-      )}
-
-      {/* Navigation Tabs */}
-      <div
-        className="inline-flex flex-wrap p-1 rounded-full gap-1 text-xs font-medium"
-        style={{ backgroundColor: 'var(--subtle)', border: '1px solid var(--border)' }}
+  return (
+    <div
+      className="min-h-screen flex"
+      style={{ backgroundColor: 'var(--bg)', color: 'var(--ink)' }}
+    >
+      {/* Desktop Sidebar */}
+      <aside
+        className={`hidden lg:flex flex-col shrink-0 border-r transition-all duration-200 overflow-hidden ${
+          sidebarCollapsed ? 'w-0 border-r-0' : 'w-[252px]'
+        }`}
+        style={{ backgroundColor: 'var(--subtle)', borderColor: 'var(--border)' }}
       >
-        {(
-          [
-            ['cards', isDe ? `Karten (${adminCards.length})` : `Cards (${adminCards.length})`],
-            ['stacks', isDe ? `Stapel (${adminStacks.length})` : `Stacks (${adminStacks.length})`],
-            [
-              'review',
-              isDe
-                ? `Freunde-Bewertung (${reviewOverview.ratedSuggestions})`
-                : `Friend Review (${reviewOverview.ratedSuggestions})`,
-            ],
-            ['insights', isDe ? `Auswertung (${ratings.length})` : `Insights (${ratings.length})`],
-            ['inbox', isDe ? `Runden-Eingang (${pendingInbox.length})` : `Group Inbox (${pendingInbox.length})`],
-            ['security', isDe ? 'Sicherheit & Export' : 'Security & Backup'],
-          ] as [AdminTab, string][]
-        ).map(([key, label]) => {
-          const active = tab === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setTab(key)}
-              className="px-4 py-2 rounded-full transition-colors cursor-pointer"
-              style={{
-                backgroundColor: active ? 'var(--accent)' : 'transparent',
-                color: active ? 'var(--accent-ink)' : 'var(--ink-muted)',
-              }}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
+        {!sidebarCollapsed && renderSidebarContent()}
+      </aside>
 
-      {/* TAB 1: CARDS & QUOTES */}
-      {tab === 'cards' && (
-        <section className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2 flex-1">
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={isDe ? 'Suche nach Text, ID oder Autor…' : 'Search text, ID, or author…'}
-                className="flex-1 min-w-[200px] rounded-full px-4 py-2 text-xs"
-                style={{
-                  backgroundColor: 'var(--subtle)',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--border)',
-                }}
-              />
-              <select
-                value={stackFilter}
-                onChange={(e) => setStackFilter(e.target.value)}
-                aria-label="Filter by stack"
-                className="rounded-full px-3.5 py-2 text-xs"
-                style={{
-                  backgroundColor: 'var(--subtle)',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--border)',
-                }}
-              >
-                <option value="all">{isDe ? 'Alle Stapel' : 'All stacks'}</option>
-                {adminStacks.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {isDe ? s.nameDe : s.nameEn}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={kindFilter}
-                onChange={(e) => setKindFilter(e.target.value as CardKind | 'all')}
-                aria-label="Filter by card kind"
-                className="rounded-full px-3.5 py-2 text-xs"
-                style={{
-                  backgroundColor: 'var(--subtle)',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--border)',
-                }}
-              >
-                <option value="all">{isDe ? 'Alle Typen' : 'All types'}</option>
-                <option value="question">{isDe ? 'Fragen' : 'Questions'}</option>
-                <option value="quote">{isDe ? 'Zitate' : 'Quotes'}</option>
-                <option value="wildcard">{isDe ? 'Impulse' : 'Wildcards'}</option>
-              </select>
-              <label
-                className="inline-flex items-center gap-1.5 text-xs cursor-pointer"
-                style={{ color: 'var(--ink-muted)' }}
-              >
-                <input
-                  type="checkbox"
-                  checked={showArchived}
-                  onChange={(e) => setShowArchived(e.target.checked)}
-                />
-                <span>{isDe ? 'Archivierte zeigen' : 'Show archived'}</span>
-              </label>
-            </div>
+      {/* Mobile Slide-Over Sidebar Drawer */}
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden flex">
+          <div
+            className="fixed inset-0"
+            style={{ backgroundColor: 'var(--scrim)' }}
+            onClick={() => setMobileNavOpen(false)}
+          />
+          <aside
+            className="relative z-10 w-[264px] max-w-[85vw] h-full border-r flex flex-col"
+            style={{ backgroundColor: 'var(--subtle)', borderColor: 'var(--border)' }}
+          >
+            {renderSidebarContent()}
+          </aside>
+        </div>
+      )}
 
+      {/* Right Main Column */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* Sticky Top Utility Bar */}
+        <header
+          className="h-14 sticky top-0 z-20 border-b px-4 sm:px-6 flex items-center justify-between gap-3 backdrop-blur-md"
+          style={{
+            borderColor: 'var(--border)',
+            backgroundColor: 'color-mix(in srgb, var(--bg) 90%, transparent)',
+          }}
+        >
+          <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
-              onClick={() => {
-                const defaultStack = stackFilter === 'all' ? firstStackId : stackFilter;
-                setEditingCard({
-                  id: `C_${Date.now()}`,
-                  stackId: defaultStack,
-                  kind: defaultStack === 'quotes' ? 'quote' : 'question',
-                  de: '',
-                  en: '',
-                  isCustom: true,
-                });
-              }}
-              className="px-4 py-2 rounded-full text-xs font-medium cursor-pointer"
-              style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
+              onClick={() => setSidebarCollapsed((c) => !c)}
+              aria-label="Toggle sidebar"
+              className="hidden lg:flex w-8 h-8 rounded-lg items-center justify-center cursor-pointer hover:bg-[var(--elevated)]"
+              style={{ color: 'var(--ink-muted)' }}
             >
-              {isDe ? '+ Neue Karte' : '+ New Card'}
+              <PanelLeft size={16} />
             </button>
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen(true)}
+              aria-label="Open menu"
+              className="lg:hidden w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer hover:bg-[var(--elevated)]"
+              style={{ color: 'var(--ink-muted)' }}
+            >
+              <Menu size={16} />
+            </button>
+            <span className="h-4 w-px" style={{ backgroundColor: 'var(--border)' }} />
+            <span className="text-sm font-medium truncate">{activeNavTitle}</span>
           </div>
 
-          <div className="space-y-2.5">
-            {filteredCards.map((card) => {
-              const stack = getStackMetaSafe(stackMap, card.stackId);
-              const score = ratingSummary[card.id];
-              const awaitingConfirm = confirmDeleteCardId === card.id;
-              return (
-                <div
-                  key={card.id}
-                  className="rounded-2xl p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3"
-                  style={{
-                    backgroundColor: 'var(--card)',
-                    border: '1px solid var(--border)',
-                    opacity: card.archived ? 0.55 : 1,
-                  }}
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-medium"
+              style={{
+                borderColor: 'var(--border)',
+                backgroundColor: 'var(--subtle)',
+                color: authStatus.mode === 'vercel' ? 'var(--accent)' : 'var(--ink-muted)',
+              }}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{
+                  backgroundColor:
+                    authStatus.mode === 'vercel' ? 'var(--accent)' : 'var(--ink-soft)',
+                }}
+              />
+              {authStatus.mode === 'vercel' ? 'Vercel Blob' : isDe ? 'Lokal' : 'Local'}
+            </span>
+
+            <button
+              type="button"
+              disabled={syncing}
+              onClick={handleSync}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border text-xs font-medium cursor-pointer hover:bg-[var(--elevated)] disabled:opacity-60"
+              style={{
+                borderColor: 'var(--border)',
+                backgroundColor: 'var(--subtle)',
+                color: 'var(--ink)',
+              }}
+            >
+              <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
+              <span>{isDe ? 'Cloud Sync' : 'Sync'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate('/review')}
+              className="hidden sm:inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
+              style={{
+                borderColor: 'var(--border)',
+                backgroundColor: 'var(--subtle)',
+                color: 'var(--ink-muted)',
+              }}
+            >
+              <ExternalLink size={13} />
+              <span>/review</span>
+            </button>
+          </div>
+        </header>
+
+        {/* Main Workspace Container */}
+        <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-8 py-6 pb-20 space-y-5">
+          {statusBanner && (
+            <div
+              className="rounded-xl px-4 py-2.5 text-xs flex items-center justify-between border"
+              style={{
+                backgroundColor: 'var(--accent-soft)',
+                borderColor: 'var(--accent-border)',
+                color: 'var(--accent)',
+              }}
+            >
+              <span>{statusBanner}</span>
+              <button
+                type="button"
+                onClick={() => setStatusBanner('')}
+                className="underline cursor-pointer"
+              >
+                OK
+              </button>
+            </div>
+          )}
+
+          {errorBanner && (
+            <div
+              className="rounded-xl px-4 py-2.5 text-xs flex items-center justify-between border"
+              style={{
+                backgroundColor: 'var(--danger-soft)',
+                borderColor: 'var(--danger)',
+                color: 'var(--danger)',
+              }}
+            >
+              <span>{errorBanner}</span>
+              <button
+                type="button"
+                onClick={() => setErrorBanner('')}
+                className="underline cursor-pointer"
+              >
+                OK
+              </button>
+            </div>
+          )}
+
+          {/* SECTION 1: CARDS (Katalog Pattern) */}
+          {tab === 'cards' && (
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <h1 className="text-2xl font-semibold tracking-tight m-0">
+                    {isDe ? 'Karten' : 'Cards'}
+                  </h1>
+                  <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
+                    {isDe
+                      ? 'Alle veröffentlichten Fragen, Zitate und Impulse. Klicke auf einen Eintrag, um ihn live zu bearbeiten.'
+                      : 'All published questions, quotes, and wildcards. Click any row to edit live.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openQuickNewCard('question')}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium cursor-pointer"
+                  style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
                 >
-                  <div className="space-y-1 flex-1 min-w-0">
-                    <div
-                      className="flex flex-wrap items-center gap-2 text-[11px]"
-                      style={{ color: 'var(--ink-muted)' }}
+                  <Plus size={14} />
+                  <span>{isDe ? 'Neue Karte' : 'New Card'}</span>
+                </button>
+              </div>
+
+              {/* Underline Sub-Tabs by Kind */}
+              <div
+                className="flex items-center gap-5 border-b overflow-x-auto no-scrollbar"
+                style={{ borderColor: 'var(--border)' }}
+              >
+                {(
+                  [
+                    ['all', isDe ? 'Alle' : 'All', cardKindCounts.all],
+                    ['question', isDe ? 'Fragen' : 'Questions', cardKindCounts.question],
+                    ['quote', isDe ? 'Zitate' : 'Quotes', cardKindCounts.quote],
+                    ['wildcard', isDe ? 'Impulse' : 'Wildcards', cardKindCounts.wildcard],
+                  ] as [CardKind | 'all', string, number][]
+                ).map(([key, label, count]) => {
+                  const active = kindFilter === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setKindFilter(key)}
+                      className="relative py-2.5 inline-flex items-center gap-2 text-xs font-medium whitespace-nowrap cursor-pointer transition-colors"
+                      style={{ color: active ? 'var(--ink)' : 'var(--ink-muted)' }}
                     >
+                      <span>{label}</span>
                       <span
-                        className="w-2 h-2 rounded-full shrink-0"
-                        style={{ backgroundColor: stack.accent }}
-                      />
-                      <span className="font-medium" style={{ color: 'var(--ink)' }}>
-                        {isDe ? stack.nameDe : stack.nameEn}
+                        className="px-2 py-0.5 rounded-full text-[11px] tabular-nums"
+                        style={{
+                          backgroundColor: active ? 'var(--ink)' : 'var(--elevated)',
+                          color: active ? 'var(--bg)' : 'var(--ink-muted)',
+                        }}
+                      >
+                        {count}
                       </span>
-                      <span>· {card.id}</span>
-                      <span>· {card.kind}</span>
-                      {card.quoteSubdeck && <span>· {card.quoteSubdeck}</span>}
-                      {card.ruhiChapter && <span>· Ch. {card.ruhiChapter}</span>}
-                      {card.archived && (
+                      {active && (
                         <span
-                          className="px-2 py-0.5 rounded-full text-[10px]"
-                          style={{ backgroundColor: 'var(--elevated)' }}
-                        >
-                          Archived
-                        </span>
+                          className="absolute inset-x-0 bottom-0 h-[2px] rounded-full"
+                          style={{ backgroundColor: 'var(--accent)' }}
+                        />
                       )}
-                    </div>
-                    <p className="text-sm m-0" style={{ color: 'var(--ink)' }}>
-                      {isDe ? card.de : card.en}
-                    </p>
-                    <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
-                      {isDe ? card.en : card.de}
-                    </p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Unified Bordered Table Container */}
+              <div
+                className="rounded-2xl border overflow-hidden"
+                style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
+              >
+                {/* Toolbar */}
+                <div
+                  className="p-3 border-b flex flex-wrap items-center gap-2.5"
+                  style={{ borderColor: 'var(--border)', backgroundColor: 'var(--subtle)' }}
+                >
+                  <div className="relative flex-1 min-w-[200px]">
+                    <Search
+                      size={14}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                      style={{ color: 'var(--ink-soft)' }}
+                    />
+                    <input
+                      type="search"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder={
+                        isDe ? 'Karten durchsuchen…' : 'Search cards, IDs, or authors…'
+                      }
+                      className="w-full h-9 rounded-lg pl-9 pr-3 text-xs"
+                      style={{
+                        backgroundColor: 'var(--card)',
+                        color: 'var(--ink)',
+                        border: '1px solid var(--border)',
+                      }}
+                    />
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    {score && (
+                  <select
+                    value={stackFilter}
+                    onChange={(e) => setStackFilter(e.target.value)}
+                    aria-label="Filter by stack"
+                    className="h-9 rounded-lg px-3 text-xs"
+                    style={{
+                      backgroundColor: 'var(--card)',
+                      color: 'var(--ink)',
+                      border: '1px solid var(--border)',
+                    }}
+                  >
+                    <option value="all">{isDe ? 'Alle Stapel' : 'All stacks'}</option>
+                    {adminStacks.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {isDe ? s.nameDe : s.nameEn}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div
+                    className="inline-flex p-0.5 rounded-lg border text-xs"
+                    style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
+                  >
+                    {(
+                      [
+                        ['active', isDe ? 'Aktiv' : 'Active'],
+                        ['archived', isDe ? 'Archiv' : 'Archived'],
+                        ['all', isDe ? 'Alle' : 'All'],
+                      ] as [CardStatusFilter, string][]
+                    ).map(([key, label]) => {
+                      const active = cardStatusFilter === key;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setCardStatusFilter(key)}
+                          className="px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer transition-colors"
+                          style={{
+                            backgroundColor: active ? 'var(--elevated)' : 'transparent',
+                            color: active ? 'var(--ink)' : 'var(--ink-muted)',
+                          }}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Divided List Rows */}
+                {filteredCards.length === 0 ? (
+                  <div className="py-12 px-4 text-center space-y-1">
+                    <div className="text-sm font-medium" style={{ color: 'var(--ink)' }}>
+                      {isDe ? 'Keine Karten in dieser Ansicht' : 'No cards match this view'}
+                    </div>
+                    <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
+                      {isDe
+                        ? 'Passe Suche, Stapel oder Statusfilter an.'
+                        : 'Try clearing the search query or changing filters.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                    {filteredCards.map((card) => {
+                      const stack = getStackMetaSafe(stackMap, card.stackId);
+                      const score = ratingSummary[card.id];
+                      const awaitingConfirm = confirmDeleteCardId === card.id;
+                      const primaryText = isDe ? card.de : card.en;
+                      const secondaryText = isDe ? card.en : card.de;
+                      return (
+                        <div
+                          key={card.id}
+                          onClick={() => setEditingCard({ ...card })}
+                          className="px-4 py-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3 cursor-pointer hover:bg-[var(--subtle)] transition-colors"
+                          style={{
+                            borderColor: 'var(--border)',
+                            opacity: card.archived ? 0.65 : 1,
+                          }}
+                        >
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-medium line-clamp-1">
+                                {primaryText}
+                              </span>
+                              <span
+                                className="px-2 py-0.5 rounded-md text-[11px] font-medium"
+                                style={{
+                                  backgroundColor: 'var(--subtle)',
+                                  color: 'var(--ink-muted)',
+                                  border: '1px solid var(--border)',
+                                }}
+                              >
+                                {isDe ? stack.nameDe : stack.nameEn}
+                              </span>
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium"
+                                style={{
+                                  backgroundColor: card.archived
+                                    ? 'var(--elevated)'
+                                    : 'var(--accent-soft)',
+                                  color: card.archived ? 'var(--ink-muted)' : 'var(--accent)',
+                                }}
+                              >
+                                <span
+                                  className="w-1.5 h-1.5 rounded-full"
+                                  style={{
+                                    backgroundColor: card.archived
+                                      ? 'var(--ink-soft)'
+                                      : 'var(--accent)',
+                                  }}
+                                />
+                                {card.archived ? (isDe ? 'Archiv' : 'Archived') : 'Live'}
+                              </span>
+                              {score && (
+                                <span
+                                  className="px-2 py-0.5 rounded-md text-[11px] tabular-nums"
+                                  style={{
+                                    backgroundColor: 'var(--subtle)',
+                                    color: 'var(--ink-muted)',
+                                  }}
+                                >
+                                  +{score.up} / -{score.down}
+                                </span>
+                              )}
+                            </div>
+
+                            <div
+                              className="text-xs truncate"
+                              style={{ color: 'var(--ink-muted)' }}
+                            >
+                              {card.kind}
+                              {card.author ? ` · ${card.author}` : ''} · {secondaryText}
+                            </div>
+                          </div>
+
+                          <div
+                            className="flex flex-wrap items-center gap-2 shrink-0"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <span
+                              className="hidden md:inline text-[11px] font-mono"
+                              style={{ color: 'var(--ink-soft)' }}
+                            >
+                              {card.id}
+                            </span>
+
+                            <select
+                              value={card.stackId}
+                              disabled={busyAction}
+                              onChange={(e) => handleMoveCardStack(card, e.target.value)}
+                              aria-label={`Move ${card.id} to stack`}
+                              className="hidden xl:block h-7 rounded-lg px-2 text-[11px] cursor-pointer"
+                              style={{
+                                backgroundColor: 'var(--subtle)',
+                                color: 'var(--ink-muted)',
+                                border: '1px solid var(--border)',
+                              }}
+                            >
+                              {adminStacks.map((s) => (
+                                <option key={s.id} value={s.id}>
+                                  {isDe ? s.nameDe : s.nameEn}
+                                </option>
+                              ))}
+                            </select>
+
+                            <button
+                              type="button"
+                              onClick={() => handleArchiveToggle(card)}
+                              disabled={busyAction}
+                              className="px-2.5 py-1 rounded-lg text-[11px] font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                              style={{ color: 'var(--ink-muted)' }}
+                            >
+                              {card.archived
+                                ? isDe
+                                  ? 'Aktivieren'
+                                  : 'Restore'
+                                : isDe
+                                  ? 'Archiv'
+                                  : 'Archive'}
+                            </button>
+
+                            {awaitingConfirm ? (
+                              <div className="inline-flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteCard(card.id)}
+                                  disabled={busyAction}
+                                  className="px-2 py-1 rounded-lg text-[11px] font-medium cursor-pointer"
+                                  style={{
+                                    backgroundColor: 'var(--danger-soft)',
+                                    color: 'var(--danger)',
+                                  }}
+                                >
+                                  {isDe ? 'Löschen?' : 'Confirm?'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteCardId(null)}
+                                  className="px-2 py-1 rounded-lg text-[11px] cursor-pointer"
+                                  style={{ color: 'var(--ink-muted)' }}
+                                >
+                                  {isDe ? 'Nein' : 'No'}
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteCardId(card.id)}
+                                className="px-2 py-1 rounded-lg text-[11px] font-medium cursor-pointer hover:opacity-80"
+                                style={{ color: 'var(--danger)' }}
+                              >
+                                {isDe ? 'Löschen' : 'Delete'}
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => setEditingCard({ ...card })}
+                              aria-label={`Edit ${card.id}`}
+                              className="p-1 rounded-lg cursor-pointer hover:bg-[var(--elevated)]"
+                              style={{ color: 'var(--ink-soft)' }}
+                            >
+                              <ChevronRight size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* SECTION 2: STACKS */}
+          {tab === 'stacks' && (
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <h1 className="text-2xl font-semibold tracking-tight m-0">
+                    {isDe ? 'Stapel' : 'Stacks'}
+                  </h1>
+                  <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
+                    {isDe
+                      ? 'Erstelle neue Stapel, benenne bestehende um, ändere die Reihenfolge oder verschiebe Karten.'
+                      : 'Create custom stacks, rename bilingual titles, pick emblems, or reorder the grid.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={openQuickNewStack}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium cursor-pointer"
+                  style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
+                >
+                  <Plus size={14} />
+                  <span>{isDe ? 'Neuer Stapel' : 'New Stack'}</span>
+                </button>
+              </div>
+
+              <div
+                className="flex items-center gap-5 border-b"
+                style={{ borderColor: 'var(--border)' }}
+              >
+                {(
+                  [
+                    ['all', isDe ? 'Alle' : 'All', stackStatusCounts.all],
+                    ['active', isDe ? 'Aktiv' : 'Active', stackStatusCounts.active],
+                    ['archived', isDe ? 'Archiviert' : 'Archived', stackStatusCounts.archived],
+                  ] as [StackStatusFilter, string, number][]
+                ).map(([key, label, count]) => {
+                  const active = stackStatusFilter === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setStackStatusFilter(key)}
+                      className="relative py-2.5 inline-flex items-center gap-2 text-xs font-medium cursor-pointer transition-colors"
+                      style={{ color: active ? 'var(--ink)' : 'var(--ink-muted)' }}
+                    >
+                      <span>{label}</span>
                       <span
-                        className="px-2.5 py-1 rounded-full text-[11px] tabular-nums"
-                        style={{ backgroundColor: 'var(--subtle)', color: 'var(--ink-muted)' }}
+                        className="px-2 py-0.5 rounded-full text-[11px] tabular-nums"
+                        style={{
+                          backgroundColor: active ? 'var(--ink)' : 'var(--elevated)',
+                          color: active ? 'var(--bg)' : 'var(--ink-muted)',
+                        }}
                       >
-                        +{score.up} / -{score.down}
+                        {count}
                       </span>
-                    )}
+                      {active && (
+                        <span
+                          className="absolute inset-x-0 bottom-0 h-[2px] rounded-full"
+                          style={{ backgroundColor: 'var(--accent)' }}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div
+                className="rounded-2xl border overflow-hidden"
+                style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
+              >
+                {filteredStacks.length === 0 ? (
+                  <div className="py-12 px-4 text-center space-y-1">
+                    <div className="text-sm font-medium">
+                      {isDe ? 'Keine Stapel in dieser Ansicht' : 'No stacks in this view'}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                    {filteredStacks.map((stack, index) => {
+                      const counts = cardCountsByStack[stack.id] || { active: 0, total: 0 };
+                      return (
+                        <div
+                          key={stack.id}
+                          className="px-4 py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-[var(--subtle)] transition-colors"
+                          style={{
+                            borderColor: 'var(--border)',
+                            opacity: stack.archived ? 0.65 : 1,
+                          }}
+                        >
+                          <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                            <div
+                              className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border"
+                              style={{
+                                backgroundColor: 'var(--subtle)',
+                                borderColor: 'var(--gold-hairline)',
+                                color: 'var(--gold)',
+                              }}
+                            >
+                              <StackArtwork
+                                stackId={stack.id}
+                                iconId={stack.iconId}
+                                size={20}
+                              />
+                            </div>
+                            <div className="min-w-0 space-y-0.5">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-medium">
+                                  {isDe ? stack.nameDe : stack.nameEn}
+                                </span>
+                                <span className="text-xs" style={{ color: 'var(--ink-muted)' }}>
+                                  / {isDe ? stack.nameEn : stack.nameDe}
+                                </span>
+                                <span
+                                  className="px-2 py-0.5 rounded-md text-[11px] font-mono"
+                                  style={{
+                                    backgroundColor: 'var(--subtle)',
+                                    color: 'var(--ink-soft)',
+                                  }}
+                                >
+                                  #{stack.id} · Ring {stack.ring}
+                                </span>
+                                <span
+                                  className="px-2 py-0.5 rounded-full text-[11px] tabular-nums"
+                                  style={{
+                                    backgroundColor: 'var(--accent-soft)',
+                                    color: 'var(--accent)',
+                                  }}
+                                >
+                                  {counts.active}/{counts.total}
+                                </span>
+                                {stack.archived && (
+                                  <span
+                                    className="px-2 py-0.5 rounded-full text-[11px]"
+                                    style={{
+                                      backgroundColor: 'var(--elevated)',
+                                      color: 'var(--ink-muted)',
+                                    }}
+                                  >
+                                    {isDe ? 'Archiviert' : 'Archived'}
+                                  </span>
+                                )}
+                              </div>
+                              <p
+                                className="text-xs m-0 truncate"
+                                style={{ color: 'var(--ink-muted)' }}
+                              >
+                                {isDe ? stack.subtitleDe : stack.subtitleEn}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              disabled={index === 0 || busyAction}
+                              onClick={() => handleMoveStackOrder(index, -1)}
+                              className="w-7 h-7 rounded-lg border flex items-center justify-center disabled:opacity-35 cursor-pointer hover:bg-[var(--elevated)]"
+                              style={{
+                                borderColor: 'var(--border)',
+                                backgroundColor: 'var(--subtle)',
+                                color: 'var(--ink-muted)',
+                              }}
+                              title={isDe ? 'Nach oben' : 'Move up'}
+                            >
+                              <ArrowUp size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={index === filteredStacks.length - 1 || busyAction}
+                              onClick={() => handleMoveStackOrder(index, 1)}
+                              className="w-7 h-7 rounded-lg border flex items-center justify-center disabled:opacity-35 cursor-pointer hover:bg-[var(--elevated)]"
+                              style={{
+                                borderColor: 'var(--border)',
+                                backgroundColor: 'var(--subtle)',
+                                color: 'var(--ink-muted)',
+                              }}
+                              title={isDe ? 'Nach unten' : 'Move down'}
+                            >
+                              <ArrowDown size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingStack({ isNew: false, stack: { ...stack } })}
+                              className="px-2.5 py-1 rounded-lg border text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                              style={{
+                                borderColor: 'var(--border)',
+                                backgroundColor: 'var(--subtle)',
+                                color: 'var(--ink)',
+                              }}
+                            >
+                              {isDe ? 'Bearbeiten' : 'Edit'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busyAction}
+                              onClick={() => handleArchiveStackToggle(stack)}
+                              className="px-2.5 py-1 rounded-lg text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                              style={{ color: 'var(--ink-muted)' }}
+                            >
+                              {stack.archived
+                                ? isDe
+                                  ? 'Aktivieren'
+                                  : 'Restore'
+                                : isDe
+                                  ? 'Archiv'
+                                  : 'Archive'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={adminStacks.length <= 1 || busyAction}
+                              onClick={() => openDeleteStackModal(stack)}
+                              className="px-2.5 py-1 rounded-lg text-xs font-medium cursor-pointer disabled:opacity-35"
+                              style={{ color: 'var(--danger)' }}
+                            >
+                              {isDe ? 'Entfernen' : 'Delete'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* SECTION 3: FRIEND REVIEW (Prüfung Pattern) */}
+          {tab === 'review' && (
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <h1 className="text-2xl font-semibold tracking-tight m-0">
+                    {isDe ? 'Prüfung' : 'Friend Review'}
+                  </h1>
+                  <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
+                    {isDe
+                      ? 'Bewertungen und Textvorschläge von Freunden prüfen und Top-Karten direkt im Katalog freischalten.'
+                      : 'Review friend ratings and wording edits, then promote top picks directly into the live catalog.'}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopyReviewUrl}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                    style={{
+                      borderColor: 'var(--border)',
+                      backgroundColor: 'var(--card)',
+                      color: 'var(--ink)',
+                    }}
+                  >
+                    {copiedReviewLink ? <Check size={13} /> : <Copy size={13} />}
+                    <span>
+                      {copiedReviewLink
+                        ? isDe
+                          ? 'Link kopiert!'
+                          : 'Copied!'
+                        : isDe
+                          ? 'Review-Link'
+                          : 'Copy /review'}
+                    </span>
+                  </button>
+
+                  {reviewSubTab === 'suggestion' && (
+                    <button
+                      type="button"
+                      disabled={selectedVisibleReviewIds.length === 0 || busyAction}
+                      onClick={() => handlePromoteReviewIds(selectedVisibleReviewIds)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium cursor-pointer disabled:opacity-45"
+                      style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
+                    >
+                      <Plus size={14} />
+                      <span>
+                        {isDe
+                          ? `${selectedVisibleReviewIds.length} übernehmen`
+                          : `Add ${selectedVisibleReviewIds.length} Selected`}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Compact KPI Strip */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div
+                  className="rounded-xl border p-3.5 space-y-0.5"
+                  style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
+                >
+                  <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                    {isDe ? 'Teilnehmende Freunde' : 'Friends Reviewed'}
+                  </div>
+                  <div className="text-xl font-semibold tabular-nums">
+                    {reviewSummary?.reviewerCount ?? 0}
+                  </div>
+                </div>
+
+                <div
+                  className="rounded-xl border p-3.5 space-y-0.5"
+                  style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
+                >
+                  <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                    {isDe ? 'Bewertete Vorschläge' : 'Rated Suggestions'}
+                  </div>
+                  <div className="text-xl font-semibold tabular-nums">
+                    {reviewOverview.ratedSuggestions}{' '}
+                    <span className="text-xs font-normal" style={{ color: 'var(--ink-muted)' }}>
+                      / {reviewOverview.totalSuggestions}
+                    </span>
+                  </div>
+                </div>
+
+                <div
+                  className="rounded-xl border p-3.5 space-y-0.5"
+                  style={{ backgroundColor: 'var(--card)', borderColor: 'var(--gold-hairline)' }}
+                >
+                  <div className="text-[11px]" style={{ color: 'var(--gold)' }}>
+                    {isDe ? 'Empfohlen (1/3 – 2/3)' : 'Recommended (1/3 – 2/3)'}
+                  </div>
+                  <div
+                    className="text-xl font-semibold tabular-nums"
+                    style={{ color: 'var(--gold)' }}
+                  >
+                    {recommendedReviewIds.size}
+                  </div>
+                </div>
+
+                <div
+                  className="rounded-xl border p-3.5 space-y-0.5"
+                  style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
+                >
+                  <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                    {isDe ? 'Offene Textvorschläge' : 'Pending Wording Edits'}
+                  </div>
+                  <div className="text-xl font-semibold tabular-nums">
+                    {reviewOverview.pendingEdits}
+                  </div>
+                </div>
+              </div>
+
+              {/* Underline Sub-Tabs */}
+              <div
+                className="flex items-center gap-5 border-b overflow-x-auto no-scrollbar"
+                style={{ borderColor: 'var(--border)' }}
+              >
+                {(
+                  [
+                    [
+                      'suggestion',
+                      isDe ? 'Neue Vorschläge' : 'New Suggestions',
+                      reviewOverview.totalSuggestions,
+                    ],
+                    ['live', isDe ? 'Live-Karten' : 'Live Cards', reviewOverview.totalLive],
+                    [
+                      'edits',
+                      isDe ? 'Textvorschläge' : 'Wording Edits',
+                      reviewOverview.pendingEdits,
+                    ],
+                  ] as [ReviewSubTab, string, number][]
+                ).map(([key, label, count]) => {
+                  const active = reviewSubTab === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setReviewSubTab(key)}
+                      className="relative py-2.5 inline-flex items-center gap-2 text-xs font-medium whitespace-nowrap cursor-pointer transition-colors"
+                      style={{ color: active ? 'var(--ink)' : 'var(--ink-muted)' }}
+                    >
+                      <span>{label}</span>
+                      <span
+                        className="px-2 py-0.5 rounded-full text-[11px] tabular-nums"
+                        style={{
+                          backgroundColor: active ? 'var(--ink)' : 'var(--elevated)',
+                          color: active ? 'var(--bg)' : 'var(--ink-muted)',
+                        }}
+                      >
+                        {count}
+                      </span>
+                      {active && (
+                        <span
+                          className="absolute inset-x-0 bottom-0 h-[2px] rounded-full"
+                          style={{ backgroundColor: 'var(--accent)' }}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Unified Bordered Container */}
+              <div
+                className="rounded-2xl border overflow-hidden"
+                style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
+              >
+                {/* Filter & Preset Toolbar */}
+                <div
+                  className="p-3 border-b flex flex-wrap items-center justify-between gap-2.5"
+                  style={{ borderColor: 'var(--border)', backgroundColor: 'var(--subtle)' }}
+                >
+                  <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[240px]">
+                    <div className="relative flex-1 min-w-[180px]">
+                      <Search
+                        size={14}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                        style={{ color: 'var(--ink-soft)' }}
+                      />
+                      <input
+                        type="search"
+                        value={reviewSearch}
+                        onChange={(e) => setReviewSearch(e.target.value)}
+                        placeholder={isDe ? 'Einträge durchsuchen…' : 'Search review items…'}
+                        className="w-full h-9 rounded-lg pl-9 pr-3 text-xs"
+                        style={{
+                          backgroundColor: 'var(--card)',
+                          color: 'var(--ink)',
+                          border: '1px solid var(--border)',
+                        }}
+                      />
+                    </div>
 
                     <select
-                      value={card.stackId}
-                      disabled={busyAction}
-                      onChange={(e) => handleMoveCardStack(card, e.target.value)}
-                      aria-label={`Move ${card.id} to stack`}
-                      title={isDe ? 'Stapel direkt ändern' : 'Reassign stack'}
-                      className="rounded-full px-3 py-1.5 text-xs cursor-pointer"
+                      value={reviewCategory}
+                      onChange={(e) => setReviewCategory(e.target.value)}
+                      aria-label="Filter review category"
+                      className="h-9 rounded-lg px-3 text-xs"
                       style={{
-                        backgroundColor: 'var(--subtle)',
+                        backgroundColor: 'var(--card)',
                         color: 'var(--ink)',
                         border: '1px solid var(--border)',
                       }}
                     >
+                      <option value="all">{isDe ? 'Alle Kategorien' : 'All categories'}</option>
                       {adminStacks.map((s) => (
                         <option key={s.id} value={s.id}>
                           {isDe ? s.nameDe : s.nameEn}
                         </option>
                       ))}
+                      <option value="__wildcards__">
+                        {isDe ? 'Impulse / Wildcards' : 'Moments / Wildcards'}
+                      </option>
                     </select>
+                  </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setEditingCard({ ...card })}
-                      className="px-3 py-1.5 rounded-full text-xs font-medium cursor-pointer"
-                      style={{ backgroundColor: 'var(--elevated)', color: 'var(--ink)' }}
-                    >
-                      {isDe ? 'Bearbeiten' : 'Edit'}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleArchiveToggle(card)}
-                      disabled={busyAction}
-                      className="px-3 py-1.5 rounded-full text-xs font-medium cursor-pointer"
-                      style={{ color: 'var(--ink-muted)' }}
-                    >
-                      {card.archived
-                        ? isDe
-                          ? 'Aktivieren'
-                          : 'Restore'
-                        : isDe
-                          ? 'Archiv'
-                          : 'Archive'}
-                    </button>
-
-                    {awaitingConfirm ? (
-                      <div className="inline-flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteCard(card.id)}
-                          disabled={busyAction}
-                          className="px-2.5 py-1.5 rounded-full text-xs font-medium cursor-pointer"
-                          style={{ backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}
-                        >
-                          {isDe ? 'Löschen?' : 'Confirm?'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDeleteCardId(null)}
-                          className="px-2 py-1.5 rounded-full text-xs cursor-pointer"
-                          style={{ color: 'var(--ink-muted)' }}
-                        >
-                          {isDe ? 'Nein' : 'No'}
-                        </button>
+                  {reviewSubTab === 'suggestion' && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div
+                        className="inline-flex p-0.5 rounded-lg border text-[11px]"
+                        style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
+                      >
+                        {(
+                          [
+                            ['auto', 'Auto'],
+                            ['top33', '33%'],
+                            ['top50', '50%'],
+                            ['top67', '67%'],
+                          ] as [RecommendationPreset, string][]
+                        ).map(([key, label]) => (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => setReviewPreset(key)}
+                            className="px-2.5 py-1 rounded-md font-medium cursor-pointer transition-colors"
+                            style={{
+                              backgroundColor:
+                                reviewPreset === key ? 'var(--gold-soft)' : 'transparent',
+                              color: reviewPreset === key ? 'var(--gold)' : 'var(--ink-muted)',
+                            }}
+                          >
+                            {label}
+                          </button>
+                        ))}
                       </div>
-                    ) : (
                       <button
                         type="button"
-                        onClick={() => setConfirmDeleteCardId(card.id)}
-                        className="px-2.5 py-1.5 rounded-full text-xs font-medium cursor-pointer hover:opacity-80"
-                        style={{ color: 'var(--danger)' }}
+                        onClick={() => setSelectedReviewIds(new Set(recommendedReviewIds))}
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                        style={{ color: 'var(--ink-muted)' }}
                       >
-                        {isDe ? 'Löschen' : 'Delete'}
+                        {isDe ? 'Auswahl zurücksetzen' : 'Reset'}
                       </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* TAB 2: STACKS MANAGEMENT */}
-      {tab === 'stacks' && (
-        <section className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
-              {isDe
-                ? 'Erstelle neue Stapel, benenne bestehende um, ändere die Reihenfolge oder verschiebe Karten beim Entfernen.'
-                : 'Create custom stacks, rename bilingual titles & 1-line subtitles, pick emblems, or reorder the deck grid.'}
-            </p>
-            <button
-              type="button"
-              onClick={() =>
-                setEditingStack({
-                  isNew: true,
-                  stack: {
-                    id: '',
-                    ring: adminStacks.length + 1,
-                    iconId: 'reflection',
-                    nameDe: '',
-                    nameEn: '',
-                    subtitleDe: '',
-                    subtitleEn: '',
-                    accent: 'var(--accent)',
-                    accentSoft: 'var(--accent-soft)',
-                    archived: false,
-                  },
-                })
-              }
-              className="px-4 py-2 rounded-full text-xs font-medium cursor-pointer"
-              style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
-            >
-              {isDe ? '+ Neuer Stapel' : '+ New Stack'}
-            </button>
-          </div>
-
-          <div className="space-y-2.5">
-            {adminStacks.map((stack, index) => {
-              const counts = cardCountsByStack[stack.id] || { active: 0, total: 0 };
-              return (
-                <div
-                  key={stack.id}
-                  className="rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3"
-                  style={{
-                    backgroundColor: 'var(--card)',
-                    border: '1px solid var(--border)',
-                    opacity: stack.archived ? 0.58 : 1,
-                  }}
-                >
-                  <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                    <div
-                      className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
-                      style={{
-                        backgroundColor: 'var(--subtle)',
-                        border: '1px solid var(--gold-hairline)',
-                        color: 'var(--gold)',
-                      }}
-                    >
-                      <StackArtwork stackId={stack.id} iconId={stack.iconId} size={24} />
                     </div>
-                    <div className="min-w-0 space-y-0.5">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-serif-card text-base font-medium">
-                          {isDe ? stack.nameDe : stack.nameEn}
-                        </span>
-                        <span className="text-xs" style={{ color: 'var(--ink-muted)' }}>
-                          / {isDe ? stack.nameEn : stack.nameDe}
-                        </span>
-                        <span
-                          className="px-2 py-0.5 rounded-full text-[10px]"
-                          style={{ backgroundColor: 'var(--subtle)', color: 'var(--ink-muted)' }}
-                        >
-                          #{stack.id} · Ring {stack.ring}
-                        </span>
-                        <span
-                          className="px-2 py-0.5 rounded-full text-[10px] tabular-nums"
-                          style={{ backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}
-                        >
-                          {counts.active} / {counts.total} {isDe ? 'Karten' : 'cards'}
-                        </span>
-                        {stack.archived && (
-                          <span
-                            className="px-2 py-0.5 rounded-full text-[10px]"
-                            style={{ backgroundColor: 'var(--elevated)', color: 'var(--ink-muted)' }}
-                          >
-                            Archived
-                          </span>
-                        )}
+                  )}
+                </div>
+
+                {/* Review Rows */}
+                {reviewSubTab === 'edits' ? (
+                  visiblePendingEdits.length === 0 ? (
+                    <div className="py-12 px-4 text-center space-y-1">
+                      <div className="text-sm font-medium">
+                        {isDe ? 'Keine offenen Textvorschläge' : 'No pending wording edits'}
                       </div>
-                      <p className="text-xs m-0 truncate" style={{ color: 'var(--ink-muted)' }}>
-                        {isDe ? stack.subtitleDe : stack.subtitleEn}
+                      <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
+                        {isDe
+                          ? 'Neue Formulierungsvorschläge aus /review erscheinen automatisch hier.'
+                          : 'Wording edits submitted from /review will appear here.'}
                       </p>
                     </div>
+                  ) : (
+                    <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                      {visiblePendingEdits.map(({ stat, edit }) => {
+                        const originalText = edit.language === 'de' ? stat.card.de : stat.card.en;
+                        return (
+                          <div
+                            key={edit.id}
+                            className="p-4 space-y-2 hover:bg-[var(--subtle)] transition-colors"
+                            style={{ borderColor: 'var(--border)' }}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                              <span style={{ color: 'var(--ink-muted)' }}>
+                                <span className="font-mono">{stat.cardId}</span> ·{' '}
+                                {edit.language.toUpperCase()} · {edit.reviewerName || 'Friend'}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={busyAction}
+                                  onClick={() =>
+                                    handleApplySuggestedEdit(
+                                      stat.cardId,
+                                      edit.language,
+                                      edit.suggestedText,
+                                      edit.id,
+                                    )
+                                  }
+                                  className="px-3 py-1 rounded-lg text-[11px] font-medium cursor-pointer"
+                                  style={{
+                                    backgroundColor: 'var(--accent)',
+                                    color: 'var(--accent-ink)',
+                                  }}
+                                >
+                                  {stat.source === 'live'
+                                    ? isDe
+                                      ? 'Live-Text ersetzen'
+                                      : 'Apply to Live Card'
+                                    : isDe
+                                      ? 'Mit Text übernehmen'
+                                      : 'Use & Add to Live'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busyAction}
+                                  onClick={() => handleDismissSuggestedEdit(edit.id)}
+                                  className="px-2.5 py-1 rounded-lg text-[11px] cursor-pointer hover:bg-[var(--elevated)]"
+                                  style={{ color: 'var(--ink-muted)' }}
+                                >
+                                  {isDe ? 'Verwerfen' : 'Dismiss'}
+                                </button>
+                              </div>
+                            </div>
+                            <div
+                              className="text-xs line-through opacity-70"
+                              style={{ color: 'var(--ink-muted)' }}
+                            >
+                              {originalText}
+                            </div>
+                            <div className="text-xs font-medium" style={{ color: 'var(--ink)' }}>
+                              {edit.suggestedText}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
+                ) : filteredReviewStats.length === 0 ? (
+                  <div className="py-12 px-4 text-center space-y-1">
+                    <div className="text-sm font-medium">
+                      {isDe ? 'Keine Einträge in dieser Ansicht' : 'No items in this view'}
+                    </div>
+                    <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
+                      {isDe
+                        ? 'Passe Kategorie oder Suchbegriff an.'
+                        : 'Adjust category or search filters to view cards.'}
+                    </p>
                   </div>
+                ) : (
+                  <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                    {filteredReviewStats.map((stat) => {
+                      const stackMeta = getStackMetaSafe(stackMap, stat.card.stackId);
+                      const isRec = recommendedReviewIds.has(stat.cardId);
+                      const isSelected = selectedReviewIds.has(stat.cardId);
+                      const scoreLabel =
+                        stat.weightedScore > 0
+                          ? `+${stat.weightedScore}`
+                          : String(stat.weightedScore);
 
-                  <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      disabled={index === 0 || busyAction}
-                      onClick={() => handleMoveStackOrder(index, -1)}
-                      className="px-2.5 py-1.5 rounded-full text-xs disabled:opacity-35 cursor-pointer"
-                      style={{ backgroundColor: 'var(--subtle)', color: 'var(--ink-muted)' }}
-                      title={isDe ? 'Nach oben' : 'Move up'}
-                    >
-                      {isDe ? 'Hoch' : 'Up'}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={index === adminStacks.length - 1 || busyAction}
-                      onClick={() => handleMoveStackOrder(index, 1)}
-                      className="px-2.5 py-1.5 rounded-full text-xs disabled:opacity-35 cursor-pointer"
-                      style={{ backgroundColor: 'var(--subtle)', color: 'var(--ink-muted)' }}
-                      title={isDe ? 'Nach unten' : 'Move down'}
-                    >
-                      {isDe ? 'Runter' : 'Down'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingStack({ isNew: false, stack: { ...stack } })}
-                      className="px-3 py-1.5 rounded-full text-xs font-medium cursor-pointer"
-                      style={{ backgroundColor: 'var(--elevated)', color: 'var(--ink)' }}
-                    >
-                      {isDe ? 'Bearbeiten' : 'Edit'}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busyAction}
-                      onClick={() => handleArchiveStackToggle(stack)}
-                      className="px-3 py-1.5 rounded-full text-xs font-medium cursor-pointer"
-                      style={{ color: 'var(--ink-muted)' }}
-                    >
-                      {stack.archived
-                        ? isDe
-                          ? 'Aktivieren'
-                          : 'Restore'
-                        : isDe
-                          ? 'Archiv'
-                          : 'Archive'}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={adminStacks.length <= 1 || busyAction}
-                      onClick={() => openDeleteStackModal(stack)}
-                      className="px-2.5 py-1.5 rounded-full text-xs font-medium cursor-pointer disabled:opacity-35"
-                      style={{ color: 'var(--danger)' }}
-                    >
-                      {isDe ? 'Entfernen' : 'Delete'}
-                    </button>
+                      return (
+                        <div
+                          key={stat.cardId}
+                          className="px-4 py-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 hover:bg-[var(--subtle)] transition-colors"
+                          style={{ borderColor: 'var(--border)' }}
+                        >
+                          <div className="flex items-start gap-3 flex-1 min-w-0">
+                            {reviewSubTab === 'suggestion' && !stat.promoted && (
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => handleToggleSelectReviewCard(stat.cardId)}
+                                aria-label={`Select ${stat.cardId}`}
+                                className="mt-1 shrink-0 cursor-pointer"
+                              />
+                            )}
+                            <div className="space-y-1 min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                                {reviewSubTab === 'suggestion' && stat.promoted && (
+                                  <span
+                                    className="px-2 py-0.5 rounded-full font-medium"
+                                    style={{
+                                      backgroundColor: 'var(--accent-soft)',
+                                      color: 'var(--accent)',
+                                    }}
+                                  >
+                                    {isDe ? 'Auf Website live' : 'Already Live'}
+                                  </span>
+                                )}
+                                {reviewSubTab === 'suggestion' && !stat.promoted && isRec && (
+                                  <span
+                                    className="px-2 py-0.5 rounded-full font-medium"
+                                    style={{
+                                      backgroundColor: 'var(--gold-soft)',
+                                      color: 'var(--gold)',
+                                    }}
+                                  >
+                                    {isDe ? 'Top-Auswahl' : 'Recommended'}
+                                  </span>
+                                )}
+                                <span
+                                  className="px-2 py-0.5 rounded-md border"
+                                  style={{
+                                    backgroundColor: 'var(--subtle)',
+                                    borderColor: 'var(--border)',
+                                    color: 'var(--ink-muted)',
+                                  }}
+                                >
+                                  {stat.card.kind === 'wildcard'
+                                    ? isDe
+                                      ? 'Impuls / Wildcard'
+                                      : 'Wildcard'
+                                    : isDe
+                                      ? stackMeta.nameDe
+                                      : stackMeta.nameEn}
+                                </span>
+                                {stat.card.author && (
+                                  <span className="font-medium" style={{ color: 'var(--ink)' }}>
+                                    {stat.card.author}
+                                  </span>
+                                )}
+                                <span className="font-mono" style={{ color: 'var(--ink-soft)' }}>
+                                  {stat.cardId}
+                                </span>
+                              </div>
+
+                              <p className="text-sm m-0" style={{ color: 'var(--ink)' }}>
+                                {isDe ? stat.card.de : stat.card.en}
+                              </p>
+                              <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
+                                {isDe ? stat.card.en : stat.card.de}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            {stat.voteCount > 0 ? (
+                              <div className="flex flex-col sm:items-end gap-0.5">
+                                <span
+                                  className="px-2.5 py-0.5 rounded-full text-[11px] font-medium tabular-nums"
+                                  style={{
+                                    backgroundColor:
+                                      stat.weightedScore > 0
+                                        ? 'var(--accent-soft)'
+                                        : stat.weightedScore < 0
+                                          ? 'var(--danger-soft)'
+                                          : 'var(--subtle)',
+                                    color:
+                                      stat.weightedScore > 0
+                                        ? 'var(--accent)'
+                                        : stat.weightedScore < 0
+                                          ? 'var(--danger)'
+                                          : 'var(--ink-muted)',
+                                  }}
+                                >
+                                  {scoreLabel} · avg {stat.averageScore >= 0 ? '+' : ''}
+                                  {stat.averageScore.toFixed(1)} ({stat.voteCount})
+                                </span>
+                                <span
+                                  className="text-[10px] tabular-nums"
+                                  style={{ color: 'var(--ink-muted)' }}
+                                >
+                                  ++ {stat.up2} · + {stat.up1} · - {stat.down1} · -- {stat.down2}
+                                </span>
+                              </div>
+                            ) : (
+                              <span
+                                className="px-2.5 py-0.5 rounded-full text-[11px]"
+                                style={{
+                                  backgroundColor: 'var(--subtle)',
+                                  color: 'var(--ink-soft)',
+                                }}
+                              >
+                                {isDe ? 'Keine Stimmen' : 'Unrated'}
+                              </span>
+                            )}
+
+                            {reviewSubTab === 'suggestion' && !stat.promoted && (
+                              <button
+                                type="button"
+                                disabled={busyAction}
+                                onClick={() => handlePromoteReviewIds([stat.cardId])}
+                                className="px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer disabled:opacity-50 hover:bg-[var(--elevated)]"
+                                style={{
+                                  backgroundColor: 'var(--subtle)',
+                                  borderColor: 'var(--border)',
+                                  color: 'var(--ink)',
+                                }}
+                              >
+                                {isDe ? '+ Aufnehmen' : '+ Add to Live'}
+                              </button>
+                            )}
+
+                            {reviewSubTab === 'live' && (
+                              <button
+                                type="button"
+                                disabled={busyAction}
+                                onClick={() => handleArchiveToggle(stat.card)}
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                                style={{ color: 'var(--ink-muted)' }}
+                              >
+                                {stat.card.archived
+                                  ? isDe
+                                    ? 'Aktivieren'
+                                    : 'Restore'
+                                  : isDe
+                                    ? 'Archivieren'
+                                    : 'Archive'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+                )}
+              </div>
+            </section>
+          )}
 
-      {/* TAB 3: FRIEND REVIEW & RECOMMENDATIONS */}
-      {tab === 'review' && (
-        <section className="space-y-5">
-          {/* Summary KPI Strip */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div
-              className="rounded-2xl p-4 space-y-1"
-              style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
-            >
-              <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                {isDe ? 'Teilnehmende Freunde' : 'Friends Reviewed'}
+          {/* SECTION 4: GROUP INBOX */}
+          {tab === 'inbox' && (
+            <section className="space-y-4">
+              <div className="space-y-1">
+                <h1 className="text-2xl font-semibold tracking-tight m-0">
+                  {isDe ? 'Runden-Eingang' : 'Group Inbox'}
+                </h1>
+                <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
+                  {isDe
+                    ? 'Eingeworfene Gästefragen aus QR-Runden prüfen und dauerhaft in Stapel aufnehmen.'
+                    : 'Review guest questions submitted via QR group rooms and promote favorites to permanent stacks.'}
+                </p>
               </div>
-              <div className="font-serif-card text-2xl tabular-nums">
-                {reviewSummary?.reviewerCount ?? 0}
-              </div>
-            </div>
 
-            <div
-              className="rounded-2xl p-4 space-y-1"
-              style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
-            >
-              <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                {isDe ? 'Bewertete Vorschläge' : 'Rated Suggestions'}
-              </div>
-              <div className="font-serif-card text-2xl tabular-nums">
-                {reviewOverview.ratedSuggestions}{' '}
-                <span className="text-xs font-sans" style={{ color: 'var(--ink-muted)' }}>
-                  / {reviewOverview.totalSuggestions}
-                </span>
-              </div>
-            </div>
-
-            <div
-              className="rounded-2xl p-4 space-y-1"
-              style={{ backgroundColor: 'var(--card)', border: '1px solid var(--gold-hairline)' }}
-            >
-              <div className="text-[11px]" style={{ color: 'var(--gold)' }}>
-                {isDe ? 'Empfohlen (1/3 – 2/3)' : 'Recommended (1/3 – 2/3)'}
-              </div>
-              <div className="font-serif-card text-2xl tabular-nums" style={{ color: 'var(--gold)' }}>
-                {recommendedReviewIds.size}
-              </div>
-            </div>
-
-            <div
-              className="rounded-2xl p-4 space-y-1"
-              style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
-            >
-              <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                {isDe ? 'Offene Textvorschläge' : 'Pending Wording Edits'}
-              </div>
-              <div className="font-serif-card text-2xl tabular-nums">
-                {reviewOverview.pendingEdits}
-              </div>
-            </div>
-          </div>
-
-          {/* Share Link + Reviewer Activity */}
-          <div
-            className="rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-            style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
-          >
-            <div className="space-y-1 min-w-0">
-              <div className="text-xs font-medium">
-                {isDe ? 'Link für Freunde zum Bewerten' : 'Shareable Friend Review Link'}
-              </div>
-              <div className="text-xs truncate" style={{ color: 'var(--ink-muted)' }}>
-                {typeof window !== 'undefined' ? `${window.location.origin}/review` : '/review'}
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={handleCopyReviewUrl}
-                className="px-4 py-1.5 rounded-full text-xs font-medium cursor-pointer"
-                style={{ backgroundColor: 'var(--elevated)', color: 'var(--ink)' }}
-              >
-                {copiedReviewLink ? (isDe ? 'Kopiert!' : 'Copied!') : isDe ? 'Link kopieren' : 'Copy Link'}
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate('/review')}
-                className="px-4 py-1.5 rounded-full text-xs font-medium cursor-pointer"
-                style={{ backgroundColor: 'var(--accent-soft)', color: 'var(--accent)' }}
-              >
-                {isDe ? '/review öffnen' : 'Open /review'}
-              </button>
-            </div>
-          </div>
-
-          {/* Controls: Recommendation Band + Source + Category + Bulk Promote */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
               <div
-                className="inline-flex p-0.5 rounded-full text-xs"
-                style={{ backgroundColor: 'var(--subtle)', border: '1px solid var(--border)' }}
+                className="flex items-center gap-5 border-b overflow-x-auto no-scrollbar"
+                style={{ borderColor: 'var(--border)' }}
               >
                 {(
                   [
-                    ['suggestions', isDe ? 'Neue Vorschläge' : 'New Suggestions'],
-                    ['live', isDe ? 'Live-Karten & Edits' : 'Live Cards & Edits'],
-                  ] as const
-                ).map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setReviewSource(key)}
-                    className="px-3.5 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
-                    style={{
-                      backgroundColor: reviewSource === key ? 'var(--elevated)' : 'transparent',
-                      color: reviewSource === key ? 'var(--ink)' : 'var(--ink-muted)',
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              <select
-                value={reviewCategory}
-                onChange={(e) => setReviewCategory(e.target.value)}
-                aria-label="Filter review category"
-                className="rounded-full px-3.5 py-2 text-xs"
-                style={{
-                  backgroundColor: 'var(--subtle)',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--border)',
-                }}
-              >
-                <option value="all">{isDe ? 'Alle Kategorien' : 'All categories'}</option>
-                {adminStacks.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {isDe ? s.nameDe : s.nameEn}
-                  </option>
-                ))}
-                <option value="__wildcards__">
-                  {isDe ? 'Impulse / Wildcards' : 'Moments / Wildcards'}
-                </option>
-              </select>
-
-              {reviewSource === 'suggestions' && (
-                <div
-                  className="inline-flex flex-wrap p-0.5 rounded-full text-[11px]"
-                  style={{ backgroundColor: 'var(--subtle)', border: '1px solid var(--border)' }}
-                >
-                  {(
-                    [
-                      ['auto', isDe ? 'Auto (33–67%)' : 'Smart Auto (33–67%)'],
-                      ['top33', 'Top 33%'],
-                      ['top50', 'Top 50%'],
-                      ['top67', 'Top 67%'],
-                    ] as [RecommendationPreset, string][]
-                  ).map(([key, label]) => (
+                    ['pending', isDe ? 'Offen' : 'Pending', inboxCounts.pending],
+                    ['promoted', isDe ? 'Übernommen' : 'Promoted', inboxCounts.promoted],
+                    ['dismissed', isDe ? 'Verworfen' : 'Dismissed', inboxCounts.dismissed],
+                  ] as [InboxStatusTab, string, number][]
+                ).map(([key, label, count]) => {
+                  const active = inboxStatusTab === key;
+                  return (
                     <button
                       key={key}
                       type="button"
-                      onClick={() => setReviewPreset(key)}
-                      className="px-2.5 py-1.5 rounded-full font-medium cursor-pointer transition-colors"
-                      style={{
-                        backgroundColor:
-                          reviewPreset === key ? 'var(--gold-soft)' : 'transparent',
-                        color: reviewPreset === key ? 'var(--gold)' : 'var(--ink-muted)',
-                      }}
+                      onClick={() => setInboxStatusTab(key)}
+                      className="relative py-2.5 inline-flex items-center gap-2 text-xs font-medium whitespace-nowrap cursor-pointer transition-colors"
+                      style={{ color: active ? 'var(--ink)' : 'var(--ink-muted)' }}
                     >
-                      {label}
+                      <span>{label}</span>
+                      <span
+                        className="px-2 py-0.5 rounded-full text-[11px] tabular-nums"
+                        style={{
+                          backgroundColor: active ? 'var(--ink)' : 'var(--elevated)',
+                          color: active ? 'var(--bg)' : 'var(--ink-muted)',
+                        }}
+                      >
+                        {count}
+                      </span>
+                      {active && (
+                        <span
+                          className="absolute inset-x-0 bottom-0 h-[2px] rounded-full"
+                          style={{ backgroundColor: 'var(--accent)' }}
+                        />
+                      )}
                     </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {reviewSource === 'suggestions' && (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedReviewIds(new Set(recommendedReviewIds))}
-                  className="px-3 py-1.5 rounded-full text-xs cursor-pointer"
-                  style={{ color: 'var(--ink-muted)' }}
-                >
-                  {isDe ? 'Empfehlung wählen' : 'Reset to Recommended'}
-                </button>
-                <button
-                  type="button"
-                  disabled={selectedVisibleReviewIds.length === 0 || busyAction}
-                  onClick={() => handlePromoteReviewIds(selectedVisibleReviewIds)}
-                  className="px-4 py-2 rounded-full text-xs font-medium cursor-pointer disabled:opacity-45"
-                  style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
-                >
-                  {isDe
-                    ? `${selectedVisibleReviewIds.length} auf Website übernehmen`
-                    : `Add ${selectedVisibleReviewIds.length} Selected to Live`}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Pending Suggested Wording Edits Banner */}
-          {visiblePendingEdits.length > 0 && (
-            <div
-              className="rounded-2xl p-4 space-y-3"
-              style={{
-                backgroundColor: 'var(--card)',
-                border: '1px solid var(--gold-hairline)',
-              }}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="font-serif-card text-base font-medium m-0" style={{ color: 'var(--gold)' }}>
-                  {isDe
-                    ? `Vorgeschlagene Formulierungsänderungen (${visiblePendingEdits.length})`
-                    : `Suggested Wording Changes (${visiblePendingEdits.length})`}
-                </h3>
-              </div>
-              <div className="space-y-2.5">
-                {visiblePendingEdits.map(({ stat, edit }) => {
-                  const originalText = edit.language === 'de' ? stat.card.de : stat.card.en;
-                  return (
-                    <div
-                      key={edit.id}
-                      className="rounded-xl p-3 space-y-2"
-                      style={{ backgroundColor: 'var(--subtle)', border: '1px solid var(--border)' }}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                        <span style={{ color: 'var(--ink-muted)' }}>
-                          {stat.cardId} · {edit.language.toUpperCase()} ·{' '}
-                          {edit.reviewerName || 'Friend'}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            disabled={busyAction}
-                            onClick={() =>
-                              handleApplySuggestedEdit(
-                                stat.cardId,
-                                edit.language,
-                                edit.suggestedText,
-                                edit.id,
-                              )
-                            }
-                            className="px-3 py-1 rounded-full text-[11px] font-medium cursor-pointer"
-                            style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
-                          >
-                            {stat.source === 'live'
-                              ? isDe
-                                ? 'Live-Text ersetzen'
-                                : 'Apply to Live Card'
-                              : isDe
-                                ? 'Mit Text übernehmen'
-                                : 'Use wording & Add to Live'}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={busyAction}
-                            onClick={() => handleDismissSuggestedEdit(edit.id)}
-                            className="px-2.5 py-1 rounded-full text-[11px] cursor-pointer"
-                            style={{ color: 'var(--ink-muted)' }}
-                          >
-                            {isDe ? 'Verwerfen' : 'Dismiss'}
-                          </button>
-                        </div>
-                      </div>
-                      <div className="text-xs line-through opacity-70" style={{ color: 'var(--ink-muted)' }}>
-                        {originalText}
-                      </div>
-                      <div className="text-xs font-medium" style={{ color: 'var(--ink)' }}>
-                        {edit.suggestedText}
-                      </div>
-                    </div>
                   );
                 })}
               </div>
-            </div>
-          )}
 
-          {/* Ranked Cards List */}
-          <div className="space-y-2.5">
-            {filteredReviewStats.map((stat) => {
-              const stackMeta = getStackMetaSafe(stackMap, stat.card.stackId);
-              const isRec = recommendedReviewIds.has(stat.cardId);
-              const isSelected = selectedReviewIds.has(stat.cardId);
-              const scoreLabel =
-                stat.weightedScore > 0 ? `+${stat.weightedScore}` : String(stat.weightedScore);
-
-              return (
+              <div
+                className="rounded-2xl border overflow-hidden"
+                style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
+              >
                 <div
-                  key={stat.cardId}
-                  className="rounded-2xl p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3"
-                  style={{
-                    backgroundColor: 'var(--card)',
-                    border:
-                      reviewSource === 'suggestions' && !stat.promoted && isRec
-                        ? '1px solid var(--gold-border)'
-                        : '1px solid var(--border)',
-                  }}
+                  className="p-3 border-b"
+                  style={{ borderColor: 'var(--border)', backgroundColor: 'var(--subtle)' }}
                 >
-                  <div className="flex items-start gap-3 flex-1 min-w-0">
-                    {reviewSource === 'suggestions' && !stat.promoted && (
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => handleToggleSelectReviewCard(stat.cardId)}
-                        aria-label={`Select ${stat.cardId}`}
-                        className="mt-1 shrink-0 cursor-pointer"
-                      />
-                    )}
-                    <div className="space-y-1 min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                        {reviewSource === 'suggestions' && stat.promoted && (
+                  <div className="relative max-w-md">
+                    <Search
+                      size={14}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                      style={{ color: 'var(--ink-soft)' }}
+                    />
+                    <input
+                      type="search"
+                      value={inboxSearch}
+                      onChange={(e) => setInboxSearch(e.target.value)}
+                      placeholder={
+                        isDe ? 'Einreichungen durchsuchen…' : 'Search room code, author, or text…'
+                      }
+                      className="w-full h-9 rounded-lg pl-9 pr-3 text-xs"
+                      style={{
+                        backgroundColor: 'var(--card)',
+                        color: 'var(--ink)',
+                        border: '1px solid var(--border)',
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {filteredInbox.length === 0 ? (
+                  <div className="py-12 px-4 text-center space-y-1">
+                    <div className="text-sm font-medium">
+                      {isDe ? 'Keine Einträge in dieser Ansicht' : 'No submissions in this view'}
+                    </div>
+                    <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
+                      {isDe
+                        ? 'Neue Gästefragen aus QR-Runden erscheinen automatisch hier.'
+                        : 'Guest questions submitted from QR rooms appear here automatically.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                    {filteredInbox.map((sub) => (
+                      <div
+                        key={sub.id}
+                        className="px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[var(--subtle)] transition-colors"
+                        style={{ borderColor: 'var(--border)' }}
+                      >
+                        <div className="space-y-1 min-w-0">
+                          <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                            <span className="font-mono">Room {sub.roomCode}</span> ·{' '}
+                            {sub.language.toUpperCase()} · {sub.authorName || 'Anonymous'}
+                          </div>
+                          <p className="text-sm m-0">{sub.text}</p>
+                        </div>
+
+                        {sub.status === 'pending' ? (
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPromoting({
+                                  sub,
+                                  stackId: firstStackId,
+                                  de: sub.text,
+                                  en: sub.text,
+                                })
+                              }
+                              className="px-3.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer"
+                              style={{
+                                backgroundColor: 'var(--accent)',
+                                color: 'var(--accent-ink)',
+                              }}
+                            >
+                              {isDe ? 'In Stapel übernehmen' : 'Promote to deck'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busyAction}
+                              onClick={() => handleDismissSubmission(sub.id)}
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                              style={{ color: 'var(--ink-muted)' }}
+                            >
+                              {isDe ? 'Verwerfen' : 'Dismiss'}
+                            </button>
+                          </div>
+                        ) : (
                           <span
-                            className="px-2.5 py-0.5 rounded-full font-medium"
+                            className="px-2.5 py-1 rounded-full text-[11px] font-medium shrink-0 self-start sm:self-center"
                             style={{
-                              backgroundColor: 'var(--accent-soft)',
-                              color: 'var(--accent)',
+                              backgroundColor:
+                                sub.status === 'promoted'
+                                  ? 'var(--accent-soft)'
+                                  : 'var(--elevated)',
+                              color:
+                                sub.status === 'promoted'
+                                  ? 'var(--accent)'
+                                  : 'var(--ink-muted)',
                             }}
                           >
-                            {isDe ? 'Auf Website live' : 'Already Live'}
+                            {sub.status === 'promoted'
+                              ? isDe
+                                ? 'Übernommen'
+                                : 'Promoted'
+                              : isDe
+                                ? 'Verworfen'
+                                : 'Dismissed'}
                           </span>
                         )}
-                        {reviewSource === 'suggestions' && !stat.promoted && isRec && (
-                          <span
-                            className="px-2.5 py-0.5 rounded-full font-medium"
-                            style={{ backgroundColor: 'var(--gold-soft)', color: 'var(--gold)' }}
-                          >
-                            {isDe ? 'Top-Auswahl' : 'Recommended'}
-                          </span>
-                        )}
-                        <span
-                          className="px-2 py-0.5 rounded-full"
-                          style={{ backgroundColor: 'var(--subtle)', color: 'var(--ink-muted)' }}
-                        >
-                          {stat.card.kind === 'wildcard'
-                            ? isDe
-                              ? 'Impuls / Wildcard'
-                              : 'Wildcard'
-                            : isDe
-                              ? stackMeta.nameDe
-                              : stackMeta.nameEn}
-                        </span>
-                        {stat.card.author && (
-                          <span style={{ color: 'var(--ink)' }}>{stat.card.author}</span>
-                        )}
-                        <span style={{ color: 'var(--ink-soft)' }}>· {stat.cardId}</span>
                       </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
 
-                      <p className="text-sm m-0" style={{ color: 'var(--ink)' }}>
-                        {isDe ? stat.card.de : stat.card.en}
-                      </p>
-                      <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
-                        {isDe ? stat.card.en : stat.card.de}
-                      </p>
+          {/* SECTION 5: INSIGHTS */}
+          {tab === 'insights' && (
+            <section className="space-y-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <h1 className="text-2xl font-semibold tracking-tight m-0">
+                    {isDe ? 'Auswertung' : 'Insights'}
+                  </h1>
+                  <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
+                    {isDe
+                      ? 'Zustimmung pro Stapel und Live-Bewertungen aus Gesprächsrunden.'
+                      : 'Approval rates across stacks and live card ratings from play sessions.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={exportCsv}
+                  className="px-3.5 py-2 rounded-lg border text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                  style={{
+                    borderColor: 'var(--border)',
+                    backgroundColor: 'var(--card)',
+                    color: 'var(--ink)',
+                  }}
+                >
+                  {isDe ? 'Bewertungen CSV' : 'Export Ratings CSV'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {stackRatingTotals.map(({ stack, up, down, pct }) => (
+                  <div
+                    key={stack.id}
+                    className="rounded-xl border p-4 space-y-1"
+                    style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
+                  >
+                    <div className="flex items-center gap-2 text-xs font-medium">
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: stack.accent }}
+                      />
+                      <span className="truncate">{isDe ? stack.nameDe : stack.nameEn}</span>
+                    </div>
+                    <div className="text-2xl font-semibold tabular-nums">
+                      {pct === null ? '—' : `${pct}%`}
+                    </div>
+                    <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                      +{up} / -{down}
                     </div>
                   </div>
-
-                  <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    {stat.voteCount > 0 ? (
-                      <div className="flex flex-col sm:items-end gap-0.5">
-                        <span
-                          className="px-2.5 py-1 rounded-full text-[11px] font-medium tabular-nums"
-                          style={{
-                            backgroundColor:
-                              stat.weightedScore > 0
-                                ? 'var(--accent-soft)'
-                                : stat.weightedScore < 0
-                                  ? 'var(--danger-soft)'
-                                  : 'var(--subtle)',
-                            color:
-                              stat.weightedScore > 0
-                                ? 'var(--accent)'
-                                : stat.weightedScore < 0
-                                  ? 'var(--danger)'
-                                  : 'var(--ink-muted)',
-                          }}
-                        >
-                          {scoreLabel} · avg {stat.averageScore >= 0 ? '+' : ''}
-                          {stat.averageScore.toFixed(1)} ({stat.voteCount})
-                        </span>
-                        <span className="text-[10px] tabular-nums" style={{ color: 'var(--ink-muted)' }}>
-                          ++ {stat.up2} · + {stat.up1} · - {stat.down1} · -- {stat.down2}
-                        </span>
-                      </div>
-                    ) : (
-                      <span
-                        className="px-2.5 py-1 rounded-full text-[11px]"
-                        style={{ backgroundColor: 'var(--subtle)', color: 'var(--ink-soft)' }}
-                      >
-                        {isDe ? 'Keine Stimmen' : 'Unrated'}
-                      </span>
-                    )}
-
-                    {reviewSource === 'suggestions' && !stat.promoted && (
-                      <button
-                        type="button"
-                        disabled={busyAction}
-                        onClick={() => handlePromoteReviewIds([stat.cardId])}
-                        className="px-3 py-1.5 rounded-full text-xs font-medium cursor-pointer disabled:opacity-50"
-                        style={{ backgroundColor: 'var(--elevated)', color: 'var(--ink)' }}
-                      >
-                        {isDe ? '+ Aufnehmen' : '+ Add to Live'}
-                      </button>
-                    )}
-
-                    {reviewSource === 'live' && (
-                      <button
-                        type="button"
-                        disabled={busyAction}
-                        onClick={() => handleArchiveToggle(stat.card)}
-                        className="px-3 py-1.5 rounded-full text-xs font-medium cursor-pointer"
-                        style={{ color: 'var(--ink-muted)' }}
-                      >
-                        {stat.card.archived
-                          ? isDe
-                            ? 'Aktivieren'
-                            : 'Restore'
-                          : isDe
-                            ? 'Archivieren'
-                            : 'Archive'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* TAB 4: INSIGHTS & RATINGS */}
-      {tab === 'insights' && (
-        <section className="space-y-6">
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {stackRatingTotals.map(({ stack, up, down, pct }) => (
-              <div
-                key={stack.id}
-                className="rounded-2xl p-4 space-y-1.5"
-                style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
-              >
-                <div className="flex items-center gap-2 text-xs font-medium">
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: stack.accent }} />
-                  <span className="truncate">{isDe ? stack.nameDe : stack.nameEn}</span>
-                </div>
-                <div className="font-serif-card text-2xl">{pct === null ? '—' : `${pct}%`}</div>
-                <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                  +{up} / -{down}
-                </div>
+                ))}
               </div>
-            ))}
-          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div
-              className="rounded-2xl p-5 space-y-3"
-              style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
-            >
               <div
-                className="flex items-center gap-2 text-sm font-medium"
-                style={{ color: 'var(--accent)' }}
+                className="flex items-center gap-5 border-b"
+                style={{ borderColor: 'var(--border)' }}
               >
-                <ThumbUpIcon size={15} />
-                <span>{isDe ? 'Beliebteste Karten' : 'Top Resonating Cards'}</span>
+                <button
+                  type="button"
+                  onClick={() => setInsightsSubTab('best')}
+                  className="relative py-2.5 inline-flex items-center gap-2 text-xs font-medium cursor-pointer"
+                  style={{ color: insightsSubTab === 'best' ? 'var(--ink)' : 'var(--ink-muted)' }}
+                >
+                  <ThumbUpIcon size={13} />
+                  <span>{isDe ? 'Beliebteste Karten' : 'Top Resonating Cards'}</span>
+                  {insightsSubTab === 'best' && (
+                    <span
+                      className="absolute inset-x-0 bottom-0 h-[2px] rounded-full"
+                      style={{ backgroundColor: 'var(--accent)' }}
+                    />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInsightsSubTab('worst')}
+                  className="relative py-2.5 inline-flex items-center gap-2 text-xs font-medium cursor-pointer"
+                  style={{ color: insightsSubTab === 'worst' ? 'var(--ink)' : 'var(--ink-muted)' }}
+                >
+                  <ThumbDownIcon size={13} />
+                  <span>{isDe ? 'Kandidaten zum Überarbeiten' : 'Lowest Rated'}</span>
+                  {insightsSubTab === 'worst' && (
+                    <span
+                      className="absolute inset-x-0 bottom-0 h-[2px] rounded-full"
+                      style={{ backgroundColor: 'var(--accent)' }}
+                    />
+                  )}
+                </button>
               </div>
-              {sortedByRating.best.length === 0 ? (
-                <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
-                  {isDe ? 'Noch keine Bewertungen vorhanden.' : 'No card ratings recorded yet.'}
-                </p>
-              ) : (
-                sortedByRating.best.slice(0, 10).map(({ card, score }) => (
-                  <div
-                    key={card.id}
-                    className="pt-2 border-t text-xs flex justify-between gap-2"
-                    style={{ borderColor: 'var(--border)' }}
-                  >
-                    <span>{isDe ? card.de : card.en}</span>
-                    <span className="shrink-0 tabular-nums" style={{ color: 'var(--accent)' }}>
-                      +{score.up} / -{score.down}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
 
-            <div
-              className="rounded-2xl p-5 space-y-3"
-              style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
-            >
               <div
-                className="flex items-center gap-2 text-sm font-medium"
-                style={{ color: 'var(--ink-muted)' }}
+                className="rounded-2xl border overflow-hidden"
+                style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
               >
-                <ThumbDownIcon size={15} />
-                <span>{isDe ? 'Kandidaten zum Überarbeiten' : 'Lowest Rated / Review'}</span>
-              </div>
-              {sortedByRating.worst.length === 0 ? (
-                <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
-                  {isDe ? 'Noch keine Bewertungen vorhanden.' : 'No card ratings recorded yet.'}
-                </p>
-              ) : (
-                sortedByRating.worst.slice(0, 10).map(({ card, score }) => (
-                  <div
-                    key={card.id}
-                    className="pt-2 border-t text-xs flex justify-between gap-2"
-                    style={{ borderColor: 'var(--border)' }}
-                  >
-                    <span>{isDe ? card.de : card.en}</span>
-                    <span className="shrink-0 tabular-nums" style={{ color: 'var(--ink-muted)' }}>
-                      +{score.up} / -{score.down}
-                    </span>
+                {(insightsSubTab === 'best' ? sortedByRating.best : sortedByRating.worst).length ===
+                0 ? (
+                  <div className="py-12 px-4 text-center text-xs" style={{ color: 'var(--ink-muted)' }}>
+                    {isDe ? 'Noch keine Bewertungen vorhanden.' : 'No card ratings recorded yet.'}
                   </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={exportCsv}
-            className="px-4 py-2 rounded-full text-xs font-medium cursor-pointer"
-            style={{ backgroundColor: 'var(--elevated)', color: 'var(--ink)' }}
-          >
-            {isDe ? 'Bewertungen als CSV exportieren' : 'Export Ratings CSV'}
-          </button>
-        </section>
-      )}
-
-      {/* TAB 4: GROUP INBOX */}
-      {tab === 'inbox' && (
-        <section className="space-y-3">
-          {pendingInbox.length === 0 ? (
-            <div
-              className="rounded-2xl p-8 text-center text-sm"
-              style={{
-                backgroundColor: 'var(--card)',
-                border: '1px solid var(--border)',
-                color: 'var(--ink-muted)',
-              }}
-            >
-              {isDe
-                ? 'Keine offenen Fragen aus QR-Runden. Eingeworfene Gästefragen erscheinen hier automatisch.'
-                : 'No pending guest questions yet. Anything submitted via a QR room appears here for review.'}
-            </div>
-          ) : (
-            pendingInbox.map((sub) => (
-              <div
-                key={sub.id}
-                className="rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
-              >
-                <div className="space-y-1">
-                  <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                    Room {sub.roomCode} · {sub.language.toUpperCase()}
-                    {sub.authorName ? ` · ${sub.authorName}` : ' · Anonymous'}
+                ) : (
+                  <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                    {(insightsSubTab === 'best' ? sortedByRating.best : sortedByRating.worst)
+                      .slice(0, 20)
+                      .map(({ card, score }) => {
+                        const stack = getStackMetaSafe(stackMap, card.stackId);
+                        return (
+                          <div
+                            key={card.id}
+                            className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-[var(--subtle)] transition-colors"
+                            style={{ borderColor: 'var(--border)' }}
+                          >
+                            <div className="min-w-0 space-y-0.5">
+                              <div className="text-sm truncate">{isDe ? card.de : card.en}</div>
+                              <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                                {isDe ? stack.nameDe : stack.nameEn} · {card.id}
+                              </div>
+                            </div>
+                            <span
+                              className="shrink-0 px-2.5 py-1 rounded-full text-xs font-medium tabular-nums"
+                              style={{
+                                backgroundColor:
+                                  insightsSubTab === 'best'
+                                    ? 'var(--accent-soft)'
+                                    : 'var(--subtle)',
+                                color:
+                                  insightsSubTab === 'best'
+                                    ? 'var(--accent)'
+                                    : 'var(--ink-muted)',
+                              }}
+                            >
+                              +{score.up} / -{score.down}
+                            </span>
+                          </div>
+                        );
+                      })}
                   </div>
-                  <p className="text-sm m-0">{sub.text}</p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setPromoting({
-                        sub,
-                        stackId: firstStackId,
-                        de: sub.text,
-                        en: sub.text,
-                      })
-                    }
-                    className="px-4 py-1.5 rounded-full text-xs font-medium cursor-pointer"
-                    style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
-                  >
-                    {isDe ? 'In Stapel übernehmen' : 'Promote to deck'}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busyAction}
-                    onClick={() => handleDismissSubmission(sub.id)}
-                    className="px-3 py-1.5 rounded-full text-xs font-medium cursor-pointer"
-                    style={{ color: 'var(--ink-muted)' }}
-                  >
-                    {isDe ? 'Verwerfen' : 'Dismiss'}
-                  </button>
-                </div>
+                )}
               </div>
-            ))
+            </section>
           )}
-        </section>
-      )}
 
-      {/* TAB 5: SECURITY & BACKUP */}
-      {tab === 'security' && (
-        <section className="space-y-5">
-          <div
-            className="rounded-2xl p-6 space-y-4"
-            style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
-          >
-            <h2 className="font-serif-card text-xl font-medium m-0">
-              {isDe ? 'Speicher & Datensicherung' : 'Storage & Backup'}
-            </h2>
-            <p className="text-xs leading-relaxed m-0" style={{ color: 'var(--ink-muted)' }}>
-              {authStatus.mode === 'vercel'
-                ? isDe
-                  ? `Verbunden mit Vercel Private Blob (${authStatus.email || 'Admin'}). Alle Änderungen an Stapeln, Fragen, Bewertungen und QR-Runden werden sofort live gespeichert.`
-                  : `Connected to Vercel Private Blob (signed in as ${authStatus.email || 'Admin'}). Every stack edit, card change, rating, and QR room persists live on the server.`
-                : isDe
-                  ? 'Aktuell läuft eine lokale Vorschau ohne Server-API. Änderungen bleiben in diesem Browser gespeichert.'
-                  : 'Currently running in browser-local preview mode. Deploy on Vercel with Private Blob for synced edits and server-verified login.'}
-            </p>
-            <div className="flex flex-wrap gap-2.5">
-              <button
-                type="button"
-                disabled={busyAction}
-                onClick={handleReseedMissing}
-                className="px-5 py-2.5 rounded-full text-xs font-medium cursor-pointer disabled:opacity-60"
-                style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
-              >
-                {isDe
-                  ? `Fehlende Standardkarten ergänzen (${SEED_CARDS.length} Basis)`
-                  : `Restore Missing Baseline Cards (${SEED_CARDS.length} seed)`}
-              </button>
-              <button
-                type="button"
-                onClick={exportJson}
-                className="px-5 py-2.5 rounded-full text-xs font-medium cursor-pointer"
-                style={{ backgroundColor: 'var(--elevated)', color: 'var(--ink)' }}
-              >
-                {isDe ? 'Kompletten Katalog als JSON laden' : 'Export Full Catalog JSON'}
-              </button>
-            </div>
-          </div>
+          {/* SECTION 6: SETTINGS & SYNC (Betrieb & Sync) */}
+          {tab === 'security' && (
+            <section className="space-y-5">
+              <div className="space-y-1">
+                <h1 className="text-2xl font-semibold tracking-tight m-0">
+                  {isDe ? 'Betrieb & Sync' : 'Settings & Sync'}
+                </h1>
+                <p className="text-xs m-0" style={{ color: 'var(--ink-muted)' }}>
+                  {isDe
+                    ? 'Speicherstatus, Basisdaten-Wiederherstellung, JSON-Export und Zugangsverwaltung.'
+                    : 'Backend storage status, baseline card restoration, JSON backup, and account security.'}
+                </p>
+              </div>
 
-          {authStatus.mode === 'vercel' && (
-            <form
-              onSubmit={handleChangePassword}
-              className="rounded-2xl p-6 space-y-3.5 max-w-md"
-              style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)' }}
-            >
-              <h2 className="font-serif-card text-xl font-medium m-0">
-                {isDe ? 'Admin-Passwort ändern' : 'Change Admin Password'}
-              </h2>
-              <input
-                type="password"
-                required
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder={isDe ? 'Aktuelles Passwort' : 'Current password'}
-                className="w-full rounded-full px-4 py-2 text-xs"
-                style={{
-                  backgroundColor: 'var(--subtle)',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--border)',
-                }}
-              />
-              <input
-                type="password"
-                required
-                minLength={8}
-                autoComplete="new-password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder={isDe ? 'Neues Passwort (mind. 8 Zeichen)' : 'New password (min. 8 chars)'}
-                className="w-full rounded-full px-4 py-2 text-xs"
-                style={{
-                  backgroundColor: 'var(--subtle)',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--border)',
-                }}
-              />
-              <input
-                type="password"
-                required
-                minLength={8}
-                autoComplete="new-password"
-                value={confirmNewPassword}
-                onChange={(e) => setConfirmNewPassword(e.target.value)}
-                placeholder={isDe ? 'Neues Passwort bestätigen' : 'Confirm new password'}
-                className="w-full rounded-full px-4 py-2 text-xs"
-                style={{
-                  backgroundColor: 'var(--subtle)',
-                  color: 'var(--ink)',
-                  border: '1px solid var(--border)',
-                }}
-              />
-              <button
-                type="submit"
-                disabled={busyAction}
-                className="px-5 py-2 rounded-full text-xs font-medium cursor-pointer disabled:opacity-60"
-                style={{ backgroundColor: 'var(--elevated)', color: 'var(--ink)' }}
-              >
-                {isDe ? 'Passwort speichern' : 'Update Password'}
-              </button>
-            </form>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div
+                  className="rounded-2xl border p-5 space-y-4"
+                  style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
+                >
+                  <div className="space-y-1">
+                    <h2 className="text-base font-semibold m-0">
+                      {isDe ? 'Speicher & Datensicherung' : 'Storage & Backup'}
+                    </h2>
+                    <p className="text-xs leading-relaxed m-0" style={{ color: 'var(--ink-muted)' }}>
+                      {authStatus.mode === 'vercel'
+                        ? isDe
+                          ? `Verbunden mit Vercel Private Blob (${authStatus.email || 'Admin'}). Alle Änderungen werden sofort live gespeichert.`
+                          : `Connected to Vercel Private Blob (${authStatus.email || 'Admin'}). Every stack edit, card change, rating, and QR room persists live.`
+                        : isDe
+                          ? 'Aktuell läuft eine lokale Vorschau ohne Server-API. Änderungen bleiben in diesem Browser gespeichert.'
+                          : 'Running in browser-local preview mode. Deploy on Vercel with Private Blob for synced edits and server-verified login.'}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={busyAction}
+                      onClick={handleReseedMissing}
+                      className="px-4 py-2 rounded-lg text-xs font-medium cursor-pointer disabled:opacity-60"
+                      style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
+                    >
+                      {isDe
+                        ? `Standardkarten ergänzen (${SEED_CARDS.length})`
+                        : `Restore Baseline Cards (${SEED_CARDS.length})`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={exportJson}
+                      className="px-4 py-2 rounded-lg border text-xs font-medium cursor-pointer hover:bg-[var(--elevated)]"
+                      style={{
+                        borderColor: 'var(--border)',
+                        backgroundColor: 'var(--subtle)',
+                        color: 'var(--ink)',
+                      }}
+                    >
+                      {isDe ? 'Katalog als JSON laden' : 'Export Full Catalog JSON'}
+                    </button>
+                  </div>
+                </div>
+
+                {authStatus.mode === 'vercel' && (
+                  <form
+                    onSubmit={handleChangePassword}
+                    className="rounded-2xl border p-5 space-y-3"
+                    style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)' }}
+                  >
+                    <h2 className="text-base font-semibold m-0">
+                      {isDe ? 'Admin-Passwort ändern' : 'Change Admin Password'}
+                    </h2>
+                    <input
+                      type="password"
+                      required
+                      autoComplete="current-password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder={isDe ? 'Aktuelles Passwort' : 'Current password'}
+                      className="w-full h-9 rounded-lg px-3 text-xs"
+                      style={{
+                        backgroundColor: 'var(--subtle)',
+                        color: 'var(--ink)',
+                        border: '1px solid var(--border)',
+                      }}
+                    />
+                    <input
+                      type="password"
+                      required
+                      minLength={8}
+                      autoComplete="new-password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder={
+                        isDe ? 'Neues Passwort (mind. 8 Zeichen)' : 'New password (min. 8 chars)'
+                      }
+                      className="w-full h-9 rounded-lg px-3 text-xs"
+                      style={{
+                        backgroundColor: 'var(--subtle)',
+                        color: 'var(--ink)',
+                        border: '1px solid var(--border)',
+                      }}
+                    />
+                    <input
+                      type="password"
+                      required
+                      minLength={8}
+                      autoComplete="new-password"
+                      value={confirmNewPassword}
+                      onChange={(e) => setConfirmNewPassword(e.target.value)}
+                      placeholder={isDe ? 'Neues Passwort bestätigen' : 'Confirm new password'}
+                      className="w-full h-9 rounded-lg px-3 text-xs"
+                      style={{
+                        backgroundColor: 'var(--subtle)',
+                        color: 'var(--ink)',
+                        border: '1px solid var(--border)',
+                      }}
+                    />
+                    <button
+                      type="submit"
+                      disabled={busyAction}
+                      className="px-4 py-2 rounded-lg border text-xs font-medium cursor-pointer disabled:opacity-60 hover:bg-[var(--elevated)]"
+                      style={{
+                        borderColor: 'var(--border)',
+                        backgroundColor: 'var(--subtle)',
+                        color: 'var(--ink)',
+                      }}
+                    >
+                      {isDe ? 'Passwort speichern' : 'Update Password'}
+                    </button>
+                  </form>
+                )}
+              </div>
+            </section>
           )}
-        </section>
-      )}
+        </main>
+      </div>
 
       {/* MODAL: Edit / Create Card */}
       {editingCard && (
@@ -2185,8 +3235,8 @@ export const AdminPage: React.FC = () => {
           <form
             onSubmit={handleSaveCard}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg rounded-3xl p-6 space-y-3.5 max-h-[90vh] overflow-y-auto"
-            style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border-strong)' }}
+            className="w-full max-w-lg rounded-2xl border p-6 space-y-3.5 max-h-[90vh] overflow-y-auto"
+            style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border-strong)' }}
           >
             <h2 className="font-serif-card text-xl font-medium m-0">
               {isDe ? 'Karte bearbeiten' : 'Edit Card'}
@@ -2208,7 +3258,7 @@ export const AdminPage: React.FC = () => {
                           : 'question',
                   });
                 }}
-                className="rounded-full px-3.5 py-2 text-xs"
+                className="rounded-lg px-3 py-2 text-xs"
                 style={{
                   backgroundColor: 'var(--subtle)',
                   color: 'var(--ink)',
@@ -2227,7 +3277,7 @@ export const AdminPage: React.FC = () => {
                 onChange={(e) =>
                   setEditingCard({ ...editingCard, kind: e.target.value as CardKind })
                 }
-                className="rounded-full px-3.5 py-2 text-xs"
+                className="rounded-lg px-3 py-2 text-xs"
                 style={{
                   backgroundColor: 'var(--subtle)',
                   color: 'var(--ink)',
@@ -2250,7 +3300,7 @@ export const AdminPage: React.FC = () => {
                       quoteSubdeck: e.target.value as QuoteSubdeck,
                     })
                   }
-                  className="rounded-full px-3.5 py-2 text-xs"
+                  className="rounded-lg px-3 py-2 text-xs"
                   style={{
                     backgroundColor: 'var(--subtle)',
                     color: 'var(--ink)',
@@ -2270,7 +3320,7 @@ export const AdminPage: React.FC = () => {
                         ruhiChapter: Number(e.target.value) as RuhiChapter,
                       })
                     }
-                    className="rounded-full px-3.5 py-2 text-xs"
+                    className="rounded-lg px-3 py-2 text-xs"
                     style={{
                       backgroundColor: 'var(--subtle)',
                       color: 'var(--ink)',
@@ -2291,7 +3341,7 @@ export const AdminPage: React.FC = () => {
               value={editingCard.de}
               onChange={(e) => setEditingCard({ ...editingCard, de: e.target.value })}
               placeholder="Deutsch (DE)"
-              className="w-full rounded-2xl p-3 text-sm"
+              className="w-full rounded-xl p-3 text-sm"
               style={{
                 backgroundColor: 'var(--subtle)',
                 color: 'var(--ink)',
@@ -2304,7 +3354,7 @@ export const AdminPage: React.FC = () => {
               value={editingCard.en}
               onChange={(e) => setEditingCard({ ...editingCard, en: e.target.value })}
               placeholder="English (EN)"
-              className="w-full rounded-2xl p-3 text-sm"
+              className="w-full rounded-xl p-3 text-sm"
               style={{
                 backgroundColor: 'var(--subtle)',
                 color: 'var(--ink)',
@@ -2319,7 +3369,7 @@ export const AdminPage: React.FC = () => {
                   value={editingCard.author || ''}
                   onChange={(e) => setEditingCard({ ...editingCard, author: e.target.value })}
                   placeholder="Author"
-                  className="w-full rounded-full px-4 py-2 text-xs"
+                  className="w-full rounded-lg px-3 py-2 text-xs"
                   style={{
                     backgroundColor: 'var(--subtle)',
                     color: 'var(--ink)',
@@ -2334,7 +3384,7 @@ export const AdminPage: React.FC = () => {
                       setEditingCard({ ...editingCard, sourceUrlDe: e.target.value })
                     }
                     placeholder="Source URL (DE)"
-                    className="rounded-full px-4 py-2 text-xs"
+                    className="rounded-lg px-3 py-2 text-xs"
                     style={{
                       backgroundColor: 'var(--subtle)',
                       color: 'var(--ink)',
@@ -2348,7 +3398,7 @@ export const AdminPage: React.FC = () => {
                       setEditingCard({ ...editingCard, sourceUrlEn: e.target.value })
                     }
                     placeholder="Source URL (EN)"
-                    className="rounded-full px-4 py-2 text-xs"
+                    className="rounded-lg px-3 py-2 text-xs"
                     style={{
                       backgroundColor: 'var(--subtle)',
                       color: 'var(--ink)',
@@ -2361,7 +3411,7 @@ export const AdminPage: React.FC = () => {
                   value={editingCard.promptDe || ''}
                   onChange={(e) => setEditingCard({ ...editingCard, promptDe: e.target.value })}
                   placeholder="Gesprächsimpuls (DE)"
-                  className="w-full rounded-full px-4 py-2 text-xs"
+                  className="w-full rounded-lg px-3 py-2 text-xs"
                   style={{
                     backgroundColor: 'var(--subtle)',
                     color: 'var(--ink)',
@@ -2373,7 +3423,7 @@ export const AdminPage: React.FC = () => {
                   value={editingCard.promptEn || ''}
                   onChange={(e) => setEditingCard({ ...editingCard, promptEn: e.target.value })}
                   placeholder="Conversation question (EN)"
-                  className="w-full rounded-full px-4 py-2 text-xs"
+                  className="w-full rounded-lg px-3 py-2 text-xs"
                   style={{
                     backgroundColor: 'var(--subtle)',
                     color: 'var(--ink)',
@@ -2390,7 +3440,7 @@ export const AdminPage: React.FC = () => {
                     setEditingCard({ ...editingCard, digDeeperDe: e.target.value })
                   }
                   placeholder={isDe ? 'Optional: Nachfrage (DE)' : 'Optional: Follow-up (DE)'}
-                  className="rounded-full px-4 py-2 text-xs"
+                  className="rounded-lg px-3 py-2 text-xs"
                   style={{
                     backgroundColor: 'var(--subtle)',
                     color: 'var(--ink)',
@@ -2404,7 +3454,7 @@ export const AdminPage: React.FC = () => {
                     setEditingCard({ ...editingCard, digDeeperEn: e.target.value })
                   }
                   placeholder={isDe ? 'Optional: Nachfrage (EN)' : 'Optional: Follow-up (EN)'}
-                  className="rounded-full px-4 py-2 text-xs"
+                  className="rounded-lg px-3 py-2 text-xs"
                   style={{
                     backgroundColor: 'var(--subtle)',
                     color: 'var(--ink)',
@@ -2418,7 +3468,7 @@ export const AdminPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setEditingCard(null)}
-                className="px-4 py-2 rounded-full text-xs cursor-pointer"
+                className="px-4 py-2 rounded-lg text-xs cursor-pointer"
                 style={{ color: 'var(--ink-muted)' }}
               >
                 {isDe ? 'Abbrechen' : 'Cancel'}
@@ -2426,7 +3476,7 @@ export const AdminPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={busyAction}
-                className="px-5 py-2 rounded-full text-xs font-medium cursor-pointer disabled:opacity-60"
+                className="px-5 py-2 rounded-lg text-xs font-medium cursor-pointer disabled:opacity-60"
                 style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
               >
                 {isDe ? 'Speichern' : 'Save'}
@@ -2446,8 +3496,8 @@ export const AdminPage: React.FC = () => {
           <form
             onSubmit={handleSaveStack}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg rounded-3xl p-6 space-y-3.5 max-h-[90vh] overflow-y-auto"
-            style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border-strong)' }}
+            className="w-full max-w-lg rounded-2xl border p-6 space-y-3.5 max-h-[90vh] overflow-y-auto"
+            style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border-strong)' }}
           >
             <h2 className="font-serif-card text-xl font-medium m-0">
               {editingStack.isNew
@@ -2484,7 +3534,7 @@ export const AdminPage: React.FC = () => {
                     });
                   }}
                   placeholder="Evening Rituals"
-                  className="w-full rounded-full px-4 py-2 text-xs"
+                  className="w-full rounded-lg px-3 py-2 text-xs"
                   style={{
                     backgroundColor: 'var(--subtle)',
                     color: 'var(--ink)',
@@ -2508,7 +3558,7 @@ export const AdminPage: React.FC = () => {
                     })
                   }
                   placeholder="Abend-Rituale"
-                  className="w-full rounded-full px-4 py-2 text-xs"
+                  className="w-full rounded-lg px-3 py-2 text-xs"
                   style={{
                     backgroundColor: 'var(--subtle)',
                     color: 'var(--ink)',
@@ -2535,7 +3585,7 @@ export const AdminPage: React.FC = () => {
                   })
                 }
                 placeholder="evening-rituals"
-                className="w-full rounded-full px-4 py-2 text-xs read-only:opacity-60"
+                className="w-full rounded-lg px-3 py-2 text-xs read-only:opacity-60"
                 style={{
                   backgroundColor: 'var(--subtle)',
                   color: 'var(--ink)',
@@ -2545,7 +3595,10 @@ export const AdminPage: React.FC = () => {
             </label>
 
             <label className="block space-y-1">
-              <div className="flex justify-between text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+              <div
+                className="flex justify-between text-[11px]"
+                style={{ color: 'var(--ink-muted)' }}
+              >
                 <span>{isDe ? 'Unterzeile DE (max. 1 Zeile)' : 'Subtitle DE (1 line max)'}</span>
                 <span>{editingStack.stack.subtitleDe.length}/55</span>
               </div>
@@ -2560,7 +3613,7 @@ export const AdminPage: React.FC = () => {
                   })
                 }
                 placeholder="Sanfte Fragen zum Ausklang"
-                className="w-full rounded-full px-4 py-2 text-xs"
+                className="w-full rounded-lg px-3 py-2 text-xs"
                 style={{
                   backgroundColor: 'var(--subtle)',
                   color: 'var(--ink)',
@@ -2570,7 +3623,10 @@ export const AdminPage: React.FC = () => {
             </label>
 
             <label className="block space-y-1">
-              <div className="flex justify-between text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+              <div
+                className="flex justify-between text-[11px]"
+                style={{ color: 'var(--ink-muted)' }}
+              >
                 <span>{isDe ? 'Unterzeile EN (max. 1 Zeile)' : 'Subtitle EN (1 line max)'}</span>
                 <span>{editingStack.stack.subtitleEn.length}/55</span>
               </div>
@@ -2585,7 +3641,7 @@ export const AdminPage: React.FC = () => {
                   })
                 }
                 placeholder="Gentle prompts to close the evening"
-                className="w-full rounded-full px-4 py-2 text-xs"
+                className="w-full rounded-lg px-3 py-2 text-xs"
                 style={{
                   backgroundColor: 'var(--subtle)',
                   color: 'var(--ink)',
@@ -2630,7 +3686,7 @@ export const AdminPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setEditingStack(null)}
-                className="px-4 py-2 rounded-full text-xs cursor-pointer"
+                className="px-4 py-2 rounded-lg text-xs cursor-pointer"
                 style={{ color: 'var(--ink-muted)' }}
               >
                 {isDe ? 'Abbrechen' : 'Cancel'}
@@ -2638,7 +3694,7 @@ export const AdminPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={busyAction}
-                className="px-5 py-2 rounded-full text-xs font-medium cursor-pointer disabled:opacity-60"
+                className="px-5 py-2 rounded-lg text-xs font-medium cursor-pointer disabled:opacity-60"
                 style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
               >
                 {isDe ? 'Speichern' : 'Save Stack'}
@@ -2658,8 +3714,8 @@ export const AdminPage: React.FC = () => {
           <form
             onSubmit={handleConfirmDeleteStack}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-3xl p-6 space-y-4"
-            style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border-strong)' }}
+            className="w-full max-w-md rounded-2xl border p-6 space-y-4"
+            style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border-strong)' }}
           >
             <h2 className="font-serif-card text-xl font-medium m-0">
               {isDe
@@ -2679,7 +3735,7 @@ export const AdminPage: React.FC = () => {
                   onChange={(e) =>
                     setDeletingStack({ ...deletingStack, reassignTo: e.target.value })
                   }
-                  className="w-full rounded-full px-3.5 py-2 text-xs"
+                  className="w-full rounded-lg px-3 py-2 text-xs"
                   style={{
                     backgroundColor: 'var(--subtle)',
                     color: 'var(--ink)',
@@ -2707,7 +3763,7 @@ export const AdminPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setDeletingStack(null)}
-                className="px-4 py-2 rounded-full text-xs cursor-pointer"
+                className="px-4 py-2 rounded-lg text-xs cursor-pointer"
                 style={{ color: 'var(--ink-muted)' }}
               >
                 {isDe ? 'Abbrechen' : 'Cancel'}
@@ -2715,7 +3771,7 @@ export const AdminPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={busyAction}
-                className="px-5 py-2 rounded-full text-xs font-medium cursor-pointer disabled:opacity-60"
+                className="px-5 py-2 rounded-lg text-xs font-medium cursor-pointer disabled:opacity-60"
                 style={{ backgroundColor: 'var(--danger-soft)', color: 'var(--danger)' }}
               >
                 {isDe ? 'Endgültig entfernen' : 'Delete Stack'}
@@ -2735,8 +3791,8 @@ export const AdminPage: React.FC = () => {
           <form
             onSubmit={handlePromoteSubmit}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg rounded-3xl p-6 space-y-3.5"
-            style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border-strong)' }}
+            className="w-full max-w-lg rounded-2xl border p-6 space-y-3.5"
+            style={{ backgroundColor: 'var(--card)', borderColor: 'var(--border-strong)' }}
           >
             <h2 className="font-serif-card text-xl font-medium m-0">
               {isDe ? 'Frage in festen Stapel aufnehmen' : 'Promote to Permanent Deck'}
@@ -2744,7 +3800,7 @@ export const AdminPage: React.FC = () => {
             <select
               value={promoting.stackId}
               onChange={(e) => setPromoting({ ...promoting, stackId: e.target.value })}
-              className="w-full rounded-full px-3.5 py-2 text-xs"
+              className="w-full rounded-lg px-3 py-2 text-xs"
               style={{
                 backgroundColor: 'var(--subtle)',
                 color: 'var(--ink)',
@@ -2763,7 +3819,7 @@ export const AdminPage: React.FC = () => {
               value={promoting.de}
               onChange={(e) => setPromoting({ ...promoting, de: e.target.value })}
               placeholder="Deutsch (DE)"
-              className="w-full rounded-2xl p-3 text-sm"
+              className="w-full rounded-xl p-3 text-sm"
               style={{
                 backgroundColor: 'var(--subtle)',
                 color: 'var(--ink)',
@@ -2776,7 +3832,7 @@ export const AdminPage: React.FC = () => {
               value={promoting.en}
               onChange={(e) => setPromoting({ ...promoting, en: e.target.value })}
               placeholder="English (EN)"
-              className="w-full rounded-2xl p-3 text-sm"
+              className="w-full rounded-xl p-3 text-sm"
               style={{
                 backgroundColor: 'var(--subtle)',
                 color: 'var(--ink)',
@@ -2787,7 +3843,7 @@ export const AdminPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setPromoting(null)}
-                className="px-4 py-2 rounded-full text-xs cursor-pointer"
+                className="px-4 py-2 rounded-lg text-xs cursor-pointer"
                 style={{ color: 'var(--ink-muted)' }}
               >
                 {isDe ? 'Abbrechen' : 'Cancel'}
@@ -2795,7 +3851,7 @@ export const AdminPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={busyAction}
-                className="px-5 py-2 rounded-full text-xs font-medium cursor-pointer disabled:opacity-60"
+                className="px-5 py-2 rounded-lg text-xs font-medium cursor-pointer disabled:opacity-60"
                 style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
               >
                 {isDe ? 'Übernehmen' : 'Promote'}
@@ -2804,6 +3860,6 @@ export const AdminPage: React.FC = () => {
           </form>
         </div>
       )}
-    </main>
+    </div>
   );
 };

@@ -173,12 +173,18 @@ export async function listAllReviewerRecords(): Promise<ReviewerRecord[]> {
   const batchSize = 12;
   for (let i = 0; i < pathnames.length; i += batchSize) {
     const chunk = pathnames.slice(i, i + batchSize);
-    const loaded = await Promise.all(
+    const results = await Promise.allSettled(
       chunk.map((pathname) => readJsonBlob<ReviewerRecord>(pathname)),
     );
-    for (const item of loaded) {
-      if (item && typeof item.reviewerId === 'string') {
-        records.push(item);
+    for (let j = 0; j < results.length; j += 1) {
+      const result = results[j];
+      if (result.status === 'fulfilled') {
+        const item = result.value;
+        if (item && typeof item.reviewerId === 'string') {
+          records.push(item);
+        }
+      } else {
+        console.error('[store] Failed to read reviewer blob:', chunk[j], result.reason);
       }
     }
   }

@@ -31,7 +31,7 @@ import type {
 import { triggerHaptic } from '../utils/audio';
 
 type CategoryTabId = string; // stackId or '__wildcards__'
-type SourceFilter = 'all' | 'suggestions' | 'live';
+type SourceFilter = 'all' | 'suggestion' | 'live';
 type ProgressFilter = 'all' | 'unrated' | 'rated';
 type ReviewViewMode = 'focus' | 'list';
 
@@ -403,7 +403,7 @@ export const ReviewPage: React.FC = () => {
     map.__wildcards__ = { rated: 0, total: 0, suggestionsTotal: 0 };
 
     for (const entry of allEntries) {
-      if (sourceFilter === 'suggestions' && entry.source !== 'suggestion') continue;
+      if (sourceFilter === 'suggestion' && entry.source !== 'suggestion') continue;
       if (sourceFilter === 'live' && entry.source !== 'live') continue;
 
       const key = entry.card.kind === 'wildcard' ? '__wildcards__' : entry.card.stackId;
@@ -534,8 +534,8 @@ export const ReviewPage: React.FC = () => {
     clearAdvanceTimer();
     triggerHaptic(8);
 
-    const current = votes[card.id];
-    const resolved: ReviewVote | 0 = current === nextVote ? 0 : nextVote;
+    const prevVote = votes[card.id];
+    const resolved: ReviewVote | 0 = prevVote === nextVote ? 0 : nextVote;
 
     setSaveError('');
     setVotes((prev) => {
@@ -562,6 +562,12 @@ export const ReviewPage: React.FC = () => {
       await saveReviewVote(card.id, resolved, reviewerName);
       setLastSavedCardId(card.id);
     } catch (err) {
+      setVotes((prev) => {
+        const copy = { ...prev };
+        if (prevVote === undefined) delete copy[card.id];
+        else copy[card.id] = prevVote;
+        return copy;
+      });
       setSaveError(
         err instanceof Error
           ? err.message
@@ -588,7 +594,8 @@ export const ReviewPage: React.FC = () => {
 
   const handleSaveEdit = async (card: CardItem, clearEdit = false) => {
     const textToSave = clearEdit ? '' : editDraft.trim();
-    const editLang = edits[card.id]?.language || lang;
+    const prevEdit = edits[card.id];
+    const editLang = prevEdit?.language || lang;
 
     setSaveError('');
     setEdits((prev) => {
@@ -616,6 +623,12 @@ export const ReviewPage: React.FC = () => {
       );
       setLastSavedCardId(card.id);
     } catch (err) {
+      setEdits((prev) => {
+        const copy = { ...prev };
+        if (prevEdit === undefined) delete copy[card.id];
+        else copy[card.id] = prevEdit;
+        return copy;
+      });
       setSaveError(
         err instanceof Error
           ? err.message
@@ -629,11 +642,18 @@ export const ReviewPage: React.FC = () => {
   };
 
   const handleNameBlur = async () => {
+    setSaveError('');
     setSavingCount((n) => n + 1);
     try {
       await saveReviewerProfile(reviewerName);
-    } catch {
-      // Name is stored locally regardless
+    } catch (err) {
+      setSaveError(
+        err instanceof Error
+          ? err.message
+          : isDe
+            ? 'Name konnte nicht gespeichert werden.'
+            : 'Could not save reviewer name.',
+      );
     } finally {
       setSavingCount((n) => Math.max(0, n - 1));
     }
@@ -990,7 +1010,7 @@ export const ReviewPage: React.FC = () => {
                     {(
                       [
                         ['all', isDe ? 'Alle' : 'All'],
-                        ['suggestions', isDe ? 'Vorschläge' : 'New'],
+                        ['suggestion', isDe ? 'Vorschläge' : 'New'],
                         ['live', isDe ? 'Live' : 'Live'],
                       ] as [SourceFilter, string][]
                     ).map(([key, label]) => {

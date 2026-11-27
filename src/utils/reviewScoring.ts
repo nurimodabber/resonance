@@ -176,7 +176,9 @@ export function aggregateReviewStats({
 
       const edit = rev.edits?.[card.id];
       if (edit && edit.text.trim()) {
-        const editId = `${rev.reviewerId}::${card.id}`;
+        const editId = edit.updatedAt
+          ? `${rev.reviewerId}::${card.id}::${edit.updatedAt}`
+          : `${rev.reviewerId}::${card.id}`;
         edits.push({
           id: editId,
           cardId: card.id,
